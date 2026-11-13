@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d258p7tsss0i1"
-path="res://.godot/imported/11_city_warszawa.png-276f69d1be67a52a7077d34e0dd35979.ctex"
+uid="uid://cr1plewj0tqgd"
+path="res://.godot/imported/11_office_tokyo.png-1671048e3e59c43bc1c6c352f18dfff6.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://docs/screenshots/11_city_warszawa.png"
-dest_files=["res://.godot/imported/11_city_warszawa.png-276f69d1be67a52a7077d34e0dd35979.ctex"]
+source_file="res://docs/screenshots/11_office_tokyo.png"
+dest_files=["res://.godot/imported/11_office_tokyo.png-1671048e3e59c43bc1c6c352f18dfff6.ctex"]
 
 [params]
 
