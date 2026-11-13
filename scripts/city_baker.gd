@@ -118,10 +118,10 @@ static func bake(raw: Dictionary, lat0: float, lon0: float) -> Dictionary:
 	}
 
 
-# a name the game's Latin font can draw: the local one when it is Latin, else a Spanish, English
-# or romanised one (Tokyo's names are Japanese in `name`)
+# a name the game's Latin font can draw: the local one when it is Latin, else a romanised one
+# (Tokyo's names are Japanese in `name`; name:en is the usual romanisation there), else Spanish
 static func pick_name(tags: Dictionary) -> String:
-	for key in ["name", "name:es", "name:en", "name:latin", "name:ja-Latn", "name:ja_rm",
+	for key in ["name", "name:en", "name:ja-Latn", "name:ja_rm", "name:latin", "name:es",
 			"int_name"]:
 		var s: String = tags.get(key, "")
 		if s != "" and is_latin(s):
