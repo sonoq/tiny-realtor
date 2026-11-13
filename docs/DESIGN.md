@@ -1,4 +1,4 @@
-# Tiny Realty: diseño
+# Tiny Realtor: diseño
 
 *Nombre provisional. Juego idle de inmobiliaria sobre mapas reales, en una ventanita de 600x600 sin bordes y siempre encima, como Tiny Battlegrounds.*
 

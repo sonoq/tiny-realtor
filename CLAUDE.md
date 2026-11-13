@@ -1,4 +1,4 @@
-# Tiny Realty (working title)
+# Tiny Realtor (working title)
 
 An idle real-estate tycoon that lives in a small always-on-top desktop widget, same format as the
 owner's other game Tiny Battlegrounds. You open real-estate offices (oficinas inmobiliarias) in
@@ -90,5 +90,5 @@ triangulate; `BlockView._fill` checks first, keep using it.
 
 - **Cloud session**: develop and commit on the branch the session was assigned (e.g.
   `ccr-...`), push with `git push -u origin <that branch>`. Never push to `main` from the cloud.
-- There is no remote yet; the owner will create one.
+- Remote: `sonoq/tiny-realtor` on GitHub.
 - Verify (import + headless run + screenshot) before every commit.

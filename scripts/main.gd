@@ -83,7 +83,7 @@ func _draw_hud() -> void:
 	var font := ThemeDB.fallback_font
 	_hud.draw_rect(Rect2(0, 0, CANVAS.x, BAR_H), BAR)
 	_hud.draw_line(Vector2(0, BAR_H), Vector2(CANVAS.x, BAR_H), GOLD)
-	_hud.draw_string(font, Vector2(10, 18), "Tiny Realty", HORIZONTAL_ALIGNMENT_LEFT, -1,
+	_hud.draw_string(font, Vector2(10, 18), "Tiny Realtor", HORIZONTAL_ALIGNMENT_LEFT, -1,
 		FONT_SIZE, GOLD)
 	_hud.draw_string(font, Vector2(0, 18), "Eixample (muestra)", HORIZONTAL_ALIGNMENT_RIGHT,
 		CANVAS.x - 10, FONT_SIZE, INK)

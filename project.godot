@@ -10,7 +10,7 @@ config_version=5
 
 [application]
 
-config/name="Tiny Realty"
+config/name="Tiny Realtor"
 run/main_scene="res://main.tscn"
 run/max_fps=60
 config/features=PackedStringArray("4.7", "GL Compatibility")

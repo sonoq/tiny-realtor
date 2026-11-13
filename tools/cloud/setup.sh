@@ -2,7 +2,7 @@
 # Prepare a fresh Linux cloud container to develop this Godot project.
 #
 #   bash tools/cloud/setup.sh                 (from the repo root)
-#   bash TinyRealty/tools/cloud/setup.sh   (from its parent, e.g. as an environment setup script)
+#   bash tiny-realtor/tools/cloud/setup.sh (from its parent, e.g. as an environment setup script)
 #
 # Installs Godot 4.7.1 to /opt/godot with a /usr/local/bin/godot symlink, the apt packages a windowed
 # run under Xvfb needs (mesa software GL, xvfb, the X client libs), then runs the first import so the
@@ -34,7 +34,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # --- 1. find the project ---------------------------------------------------------------------
-is_project() { [ -f "$1/project.godot" ] && grep -q 'config/name="Tiny Realty"' "$1/project.godot"; }
+is_project() { [ -f "$1/project.godot" ] && grep -q 'config/name="Tiny Realtor"' "$1/project.godot"; }
 
 find_repo() {
 	local here cand
