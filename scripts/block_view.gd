@@ -1,13 +1,14 @@
 class_name BlockView
 extends Node2D
 
-# Draws one baked block (format tiny-realestate-block, see BlockBaker) as isometric pixel art,
-# once. Ground coordinates are metres, x east and y north, already turned so the streets run
-# along the axes. The drawing is meant for a low-res SubViewport that the caller scales up with
-# nearest filtering, so every primitive here is plain and unsmoothed.
-# v2 blocks are a disc (radius_m) floating as a round diorama; v1 blocks (the hand-made sample)
-# are the box their street ends span. When `active_radius` is set, everything outside it is
-# dimmed and a gold ring marks the edge: the part of the download the office can use yet.
+# Draws one baked office area (format tiny-realestate-block v2, see BlockBaker) as isometric
+# pixel art, once: a round diorama of the real streets, with the city blocks between them cut
+# into plots. Empty plots are bare lots; pre-built ones get procedural buildings by tier and
+# zone (never real footprints). Ground coordinates are metres, x east and y north, already
+# turned so the streets run along the axes. The drawing is meant for a low-res SubViewport that
+# the caller scales up with nearest filtering, so every primitive here is plain and unsmoothed.
+# When `active_radius` is set, everything outside it is dimmed and a gold ring marks the edge:
+# the part of the download the office can use yet.
 
 # low-res pixels per metre; the prototype found this shows about one and a half manzanas in 600 px
 const SCALE := 1.35
@@ -41,7 +42,13 @@ const WATER := Color("#4d86b8")
 const WATER_EDGE := Color("#3d6f9c")
 const DIRT := Color("#b08d5e")
 const DIRT_EDGE := Color("#9f7e52")
-const PARKING := Color("#8b8a8f")
+const BLOCK := Color("#a99f78")
+const COURT := Color("#86a85a")
+const RAIL_BED := Color("#8a7f73")
+const RAIL := Color("#3c3a40")
+# empty lots by zone: dirt for homes, sand for shops, gravel for industry
+const LOT := {"residential": Color("#b8936a"), "commercial": Color("#cdb685"),
+	"industrial": Color("#9c968a")}
 const EARTH_LIT := Color("#7a5a3c")
 const EARTH_DARK := Color("#5e4530")
 const GLASS := Color("#3d4a63")
@@ -55,6 +62,10 @@ const PROP_ROOF := Color("#bdb5a6")
 const OFFICE_WALL := Color("#f4f1ea")
 const OFFICE_ROOF := Color("#f0b429")
 const OFFICE_FLAG := Color("#e5534b")
+# the share of empty plots with a "for sale" sign: enough to read as buildable, not a forest
+const SIGN_EVERY := 0.18
+# a building stands this far (m) inside its plot's edges
+const SETBACK := 1.2
 const RING := Color("#ffd84a")
 # outside the active radius: ground under a dark veil, buildings faded toward this haze
 const VEIL := Color(0.08, 0.07, 0.16, 0.42)
@@ -98,24 +109,16 @@ func load_block(path: String) -> bool:
 
 
 func set_block(block: Dictionary) -> bool:
+	if int(block.get("format_version", 0)) < 2:
+		push_error("BlockView: only format v2 blocks are drawn")
+		return false
 	_block = block
-	_radius = float(_block.get("radius_m", 0.0))
-	var edge := PackedVector2Array()
-	if _radius > 0.0:
-		edge = Geo.circle(_radius, DISC_SIDES)
-		_slab = Rect2(-_radius, -_radius, _radius * 2.0, _radius * 2.0)
-	else:
-		# a v1 block: the slab is the box the street centre lines span
-		var ends := PackedVector2Array()
-		for road: Dictionary in _block["roads"]:
-			ends.append_array(_points(road["line"]))
-		_slab = Rect2(ends[0], Vector2.ZERO)
-		for p: Vector2 in ends:
-			_slab = _slab.expand(p)
-		edge = _corners()
-	var tallest := 0.0
+	_radius = float(_block["radius_m"])
+	_slab = Rect2(-_radius, -_radius, _radius * 2.0, _radius * 2.0)
+	var edge := Geo.circle(_radius, DISC_SIDES)
+	var tallest := 12.0
 	for plot: Dictionary in _block["plots"]:
-		tallest = maxf(tallest, float(plot["height_m"]) + 12.0)
+		tallest = maxf(tallest, _height(plot) + 30.0)
 	var box := Rect2(_raw(edge[0].x, edge[0].y, 0.0), Vector2.ZERO)
 	for c: Vector2 in edge:
 		box = box.expand(_raw(c.x, c.y, 0.0)).expand(_raw(c.x, c.y, tallest))
@@ -127,35 +130,89 @@ func set_block(block: Dictionary) -> bool:
 	return true
 
 
+# where a ground point (metres) lands in the drawing, for labels drawn over it
+func project(m: Vector2) -> Vector2:
+	return _p(m.x, m.y, 0.0)
+
+
+# street name labels: for each name, spots on its longest straight stretches at least 160 m
+# apart, with the on-screen direction of the street there; the caller drops the overlaps
+func street_labels() -> Array[Dictionary]:
+	var by_name := {}
+	for road: Dictionary in _block["roads"]:
+		var name: String = road["name"] if road["name"] != "" else road.get("ref", "")
+		if name == "" or road["kind"] in ["motorway", "trunk"] and road["name"] == "":
+			continue
+		var line := _points(road["line"])
+		for i in range(1, line.size()):
+			if not by_name.has(name):
+				by_name[name] = []
+			by_name[name].append([line[i - 1], line[i]])
+	var out: Array[Dictionary] = []
+	for name: String in by_name:
+		var segs: Array = by_name[name]
+		segs.sort_custom(func(a: Array, b: Array) -> bool:
+			return a[0].distance_to(a[1]) > b[0].distance_to(b[1]))
+		var spots := PackedVector2Array()
+		for seg: Array in segs:
+			var a: Vector2 = seg[0]
+			var b: Vector2 = seg[1]
+			if a.distance_to(b) < 35.0:
+				break
+			var mid := (a + b) * 0.5
+			if mid.length() > _radius - 15.0:
+				continue
+			var far := true
+			for q in spots:
+				far = far and q.distance_to(mid) > 160.0
+			if not far:
+				continue
+			spots.append(mid)
+			var d := project(b) - project(a)
+			var angle := d.angle()
+			if angle > PI * 0.5:
+				angle -= PI
+			elif angle < -PI * 0.5:
+				angle += PI
+			out.append({"text": name, "at": project(mid), "angle": angle,
+				"room": project(a).distance_to(project(b))})
+	return out
+
+
 func _draw() -> void:
 	if _block.is_empty():
 		return
 	_draw_ground()
-	for w: Dictionary in _block.get("water", []):
+	for w: Dictionary in _block["water"]:
 		_fill(_ground(w["poly"]), WATER, WATER_EDGE)
-	for l: Dictionary in _block.get("land", []):
+	for l: Dictionary in _block["land"]:
 		_fill(_ground(l["poly"]), PAVING, CURB)
-	_draw_roads()
+	# parks first: a street through a park is drawn over it
 	for green: Dictionary in _block["greens"]:
 		var tone: Color = GREEN_TONE.get(green["kind"], GREEN)
 		_fill(_ground(green["poly"]), tone, tone.darkened(0.15))
-	var buildings: Array[Dictionary] = []
+	_draw_roads()
+	_draw_rails()
+	for b: Dictionary in _block["blocks"]:
+		_fill(_ground(b["poly"]), BLOCK, BLOCK.darkened(0.12))
+	for c: Dictionary in _block["courts"]:
+		_fill(_ground(c["poly"]), COURT, COURT.darkened(0.1))
+	var office: String = _block.get("office_plot", "")
+	var built: Array[Dictionary] = []
 	for plot: Dictionary in _block["plots"]:
-		if plot["cat"] == "empty" or float(plot["height_m"]) <= 0.0:
-			_draw_lot(plot)
-		else:
-			buildings.append(plot)
-	for plot in buildings:
+		if int(plot["built_tier"]) > 0 or plot["id"] == office:
+			built.append(plot)
+		_draw_lot(plot)
+	for plot in built:
 		_draw_shadow(plot)
 	if active_radius > 0.0:
 		_draw_veil()
-	# painter's order: the far side (small u + v) first; footprints rarely overlap, so this is
-	# close enough
-	buildings.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+	# painter's order: the far side (small u + v) first; plots never overlap, so this is close
+	# enough
+	built.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return _depth(a) < _depth(b))
-	var office: String = _block.get("office_plot", "")
 	var has_office := false
-	for plot in buildings:
+	for plot in built:
 		var mid := _centre(_points(plot["poly"]))
 		_haze = HAZE_MIX if active_radius > 0.0 and mid.length() > active_radius else 0.0
 		if plot["id"] == office:
@@ -164,21 +221,34 @@ func _draw() -> void:
 		else:
 			_draw_building(plot)
 	_haze = 0.0
-	if active_radius > 0.0 and not has_office:
+	if not has_office:
 		_draw_kiosk()
+
+
+func _height(plot: Dictionary) -> float:
+	var levels := int(plot.get("levels", 0))
+	return levels * FLOOR_M + 1.0 if levels > 0 else 0.0
+
+
+# a plot's building footprint: the plot pulled in by the setback (the biggest piece left)
+func _footprint(plot: Dictionary) -> PackedVector2Array:
+	var poly := _points(plot["poly"])
+	var best := PackedVector2Array()
+	for part: PackedVector2Array in Geometry2D.offset_polygon(poly, -SETBACK):
+		if absf(_area(part)) > absf(_area(best)):
+			best = part
+	return best if best.size() >= 3 else poly
 
 
 # --- ground ------------------------------------------------------------------------------------
 
 func _draw_ground() -> void:
-	var edge := Geo.circle(_radius, DISC_SIDES) if _radius > 0.0 else _corners()
+	var edge := Geo.circle(_radius, DISC_SIDES)
 	# the earth faces the viewer can see, shaded like walls
 	for i in edge.size():
 		var a := edge[i]
 		var b := edge[(i + 1) % edge.size()]
-		var n := Vector2(b.y - a.y, -(b.x - a.x)) if Geo.area(edge) > 0.0 \
-			else Vector2(-(b.y - a.y), b.x - a.x)
-		var nu := Vector2(n.x, -n.y).normalized()
+		var nu := Vector2(b.y - a.y, b.x - a.x).normalized()
 		if nu.x + nu.y <= 0.0:
 			continue
 		var light := clampf((nu.x - nu.y + 1.0) * 0.5, 0.0, 1.0)
@@ -190,7 +260,7 @@ func _draw_ground() -> void:
 	while y < _slab.end.y:
 		var x := _slab.position.x + fmod(absf(y), 4.0)
 		while x < _slab.end.x:
-			if _radius <= 0.0 or x * x + y * y < r2:
+			if x * x + y * y < r2:
 				draw_rect(Rect2(_p(x, y, 0.0).floor(), Vector2.ONE), PAVING_DOT)
 			x += 4.0
 		y += 3.0
@@ -297,14 +367,17 @@ func _near_junction(p: Vector2, junctions: Dictionary) -> bool:
 	return false
 
 
-# an empty plot: bare dirt (or a car park) with a yellow "for sale" sign in the middle
+# every plot's ground: an empty one is a bare lot (some with a "for sale" sign), a built one
+# the same ground its building stands on
 func _draw_lot(plot: Dictionary) -> void:
 	var poly := _points(plot["poly"])
-	var tone := PARKING if plot.get("osm_type") == "parking" else DIRT
-	_fill(_ground_pts(poly), tone, tone.darkened(0.12) if tone == PARKING else DIRT_EDGE)
-	if absf(_area(poly)) < 60.0:
+	var tone: Color = LOT.get(plot["zone"], DIRT)
+	_fill(_ground_pts(poly), tone, tone.darkened(0.13))
+	if int(plot["built_tier"]) > 0 or _h01(plot["id"] + "sign") > SIGN_EVERY:
 		return
 	var mid := _centre(poly)
+	if active_radius > 0.0 and mid.length() > active_radius:
+		return
 	var foot := _p(mid.x, mid.y, 0.0).floor()
 	draw_rect(Rect2(foot + Vector2(0, -5), Vector2(1, 5)), POST)
 	draw_rect(Rect2(foot + Vector2(-3, -9), Vector2(7, 4)), SIGN)
@@ -312,11 +385,35 @@ func _draw_lot(plot: Dictionary) -> void:
 
 # a cheap cast shadow: the footprint slid toward the viewer's left, in see-through dark
 func _draw_shadow(plot: Dictionary) -> void:
-	var reach := minf(float(plot["height_m"]) * 0.35, 40.0)
+	var reach := minf(_height(plot) * 0.35, 40.0)
 	var pts := PackedVector2Array()
-	for p: Vector2 in _points(plot["poly"]):
+	for p: Vector2 in _footprint(plot):
 		pts.append(_p(p.x - reach, p.y + reach * 0.2, 0.0))
 	_fill(pts, SHADOW, Color(0, 0, 0, 0))
+
+
+# railways: a gravel bed with the track down the middle and a sleeper every few metres
+func _draw_rails() -> void:
+	for rail: Dictionary in _block["rails"]:
+		var line := _points(rail["line"])
+		var tram: bool = rail["kind"] == "tram"
+		if not tram:
+			for part: PackedVector2Array in Geometry2D.offset_polyline(line, 3.0):
+				for piece in _in_disc(part):
+					_fill(_ground_pts(piece), RAIL_BED, Color(0, 0, 0, 0))
+		for i in range(1, line.size()):
+			var a := line[i - 1]
+			var b := line[i]
+			draw_line(_p(a.x, a.y, 0.0), _p(b.x, b.y, 0.0), RAIL)
+			if tram:
+				continue
+			var side := (b - a).normalized().orthogonal() * 1.6
+			var d := 0.0
+			while d < a.distance_to(b):
+				var c := a.lerp(b, d / a.distance_to(b))
+				draw_line(_p(c.x - side.x, c.y - side.y, 0.0), _p(c.x + side.x, c.y + side.y, 0.0),
+					RAIL)
+				d += 3.0
 
 
 # the ground outside the active radius under a dark veil, and a dashed gold ring on its edge
@@ -338,9 +435,9 @@ func _draw_veil() -> void:
 
 func _draw_building(plot: Dictionary) -> void:
 	var id: String = plot["id"]
-	var cat: String = plot["cat"]
-	var poly := _points(plot["poly"])
-	var top := float(plot["height_m"])
+	var cat: String = plot["zone"]
+	var poly := _footprint(plot)
+	var top := _height(plot)
 	var floors := maxi(1, int(plot["levels"]))
 	var facades: Array = FACADE.get(cat, FACADE["residential"])
 	var roofs: Array = ROOF.get(cat, ROOF["residential"])
@@ -368,8 +465,8 @@ func _draw_building(plot: Dictionary) -> void:
 # the player's office: white walls, a gold roof, and a red flag with a gold pin floating above,
 # so it is the first thing the eye finds
 func _draw_office(plot: Dictionary) -> void:
-	var poly := _points(plot["poly"])
-	var top := float(plot["height_m"])
+	var poly := _footprint(plot)
+	var top := _height(plot)
 	_extrude(poly, 0.0, top, OFFICE_WALL, OFFICE_ROOF, plot["id"], maxi(1, int(plot["levels"])),
 		"office")
 	var mid := _centre(poly)
@@ -466,16 +563,8 @@ func _depth(plot: Dictionary) -> float:
 	return c.x - c.y
 
 
-func _corners() -> PackedVector2Array:
-	var s := _slab
-	return PackedVector2Array([s.position, Vector2(s.end.x, s.position.y), s.end,
-		Vector2(s.position.x, s.end.y)])
-
-
 # a ground polygon cut to the disc (roads stick out by half their width at the edge)
 func _in_disc(poly: PackedVector2Array) -> Array[PackedVector2Array]:
-	if _radius <= 0.0:
-		return [poly]
 	var r2 := _radius * _radius
 	for p in poly:
 		if p.length_squared() > r2:

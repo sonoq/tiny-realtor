@@ -59,11 +59,18 @@ func _init() -> void:
 func _check_block(block: Dictionary, label: String, radius: float) -> void:
 	var text := JSON.stringify(block)
 	var st: Dictionary = block["stats"]
-	print("%s: %d plots (%d buildings, %d estimated), %d roads, %d greens, %d water, rot %.1f, " \
-		% [label, block["plots"].size(), st["buildings"], st["levels_estimated"], st["roads"],
-		st["greens"], st["water"], block["rotation_deg"]] \
-		+ "office %s, bake %d ms, %d KB" % [block["office_plot"], st["bake_ms"], text.length() / 1024])
-	for key in ["plots", "greens", "water", "land"]:
+	var named := 0
+	for p: Dictionary in block["plots"]:
+		if p["street"] != "":
+			named += 1
+	print("%s: %d roads, %d faces -> %d blocks -> %d plots (%d built, %d with a street name), " \
+		% [label, st["roads"], st["faces"], st["blocks"], st["plots"], st["built"], named] \
+		+ "%d greens, %d water, rot %.1f, office %s, graph %d ms, bake %d ms, %d KB" % [
+		st["greens"], st["water"], block["rotation_deg"], block["office_plot"], st["graph_ms"],
+		st["bake_ms"], text.length() / 1024])
+	if block["plots"].is_empty():
+		_fail(label + " has no plots")
+	for key in ["plots", "blocks", "greens", "courts", "water", "land"]:
 		for item: Dictionary in block[key]:
 			_check_poly(item["poly"], "%s %s %s" % [label, key, item.get("id", item.get("kind"))],
 				radius)

@@ -93,10 +93,16 @@ static func area(lat0: float, lon0: float, radius: float) -> Dictionary:
 		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(SAMPLE))
 		if parsed is Dictionary:
 			var shift := Vector2(lat0, lon0) - SAMPLE_AT
+			var kept: Array = []
 			for e: Dictionary in parsed.get("elements", []):
+				# the game no longer downloads buildings, so neither does the test data
+				if e.get("tags", {}).has("building"):
+					continue
 				for g: Dictionary in e.get("geometry", []):
 					g["lat"] = float(g["lat"]) + shift.x
 					g["lon"] = float(g["lon"]) + shift.y
+				kept.append(e)
+			parsed["elements"] = kept
 			return parsed
 	var key := "%.4f,%.4f" % [lat0, lon0]
 	var k := Geo.scale_at(lat0)
@@ -104,7 +110,6 @@ static func area(lat0: float, lon0: float, radius: float) -> Dictionary:
 	var block := 70.0 + _h01(key + "blk") * 60.0
 	var street := 10.0 + _h01(key + "st") * 6.0
 	var pitch := block + street
-	var base := 3 + int(_h01(key + "lv") * 7.0)
 	var els: Array = []
 	var n := int(radius * 1.1 / pitch) + 1
 	for axis in 2:
@@ -121,49 +126,25 @@ static func area(lat0: float, lon0: float, radius: float) -> Dictionary:
 				tags["width"] = str(street + 10.0)
 			els.append(_way(tags, PackedVector2Array([a.rotated(turn), b.rotated(turn)]), lat0,
 				lon0, k))
+	# a few parks, one commercial and one industrial zone, and a railway on a diagonal
 	for gx in range(-n, n):
 		for gy in range(-n, n):
 			var lo := Vector2(gx, gy) * pitch + Vector2.ONE * (street * 0.5 + 3.0)
 			var hi := Vector2(gx + 1, gy + 1) * pitch - Vector2.ONE * (street * 0.5 + 3.0)
-			if ((lo + hi) * 0.5).length() > radius + pitch:
-				continue
-			var roll := _h01(key + "b%d_%d" % [gx, gy])
-			if roll < 0.08:
+			var near := ((lo + hi) * 0.5).length() < radius + pitch
+			if near and _h01(key + "b%d_%d" % [gx, gy]) < 0.07:
 				els.append(_way({"leisure": "park"}, _rect(lo, hi, turn), lat0, lon0, k))
-			elif roll < 0.12:
-				els.append(_way({"landuse": "construction"}, _rect(lo, hi, turn), lat0, lon0, k))
-			else:
-				_perimeter_block(els, lo, hi, turn, base, key + "%d_%d" % [gx, gy], lat0, lon0, k)
+	var shop := Vector2(_h01(key + "cx") - 0.5, _h01(key + "cy") - 0.5) * radius
+	els.append(_way({"landuse": "commercial"}, _rect(shop - Vector2.ONE * 160.0,
+		shop + Vector2.ONE * 160.0, turn), lat0, lon0, k))
+	var works := -shop.normalized() * radius * 0.7
+	els.append(_way({"landuse": "industrial"}, _rect(works - Vector2.ONE * 130.0,
+		works + Vector2.ONE * 130.0, turn), lat0, lon0, k))
+	var track := Vector2.RIGHT.rotated(turn + 0.6)
+	els.append(_way({"railway": "rail"}, PackedVector2Array([track * -radius * 1.2,
+		track * radius * 1.2]), lat0, lon0, k))
 	return {"version": 0.6, "generator": "Tiny Realtor fixture (made-up test data)",
 		"elements": els}
-
-
-# buildings around the edge of a block with a courtyard in the middle, like a European ensanche
-static func _perimeter_block(els: Array, lo: Vector2, hi: Vector2, turn: float, base: int,
-		key: String, lat0: float, lon0: float, k: Vector2) -> void:
-	var depth := 14.0
-	var sides := [[lo, Vector2(hi.x, lo.y + depth)], [Vector2(lo.x, hi.y - depth), hi],
-		[Vector2(lo.x, lo.y + depth), Vector2(lo.x + depth, hi.y - depth)],
-		[Vector2(hi.x - depth, lo.y + depth), Vector2(hi.x, hi.y - depth)]]
-	for s in sides.size():
-		var a: Vector2 = sides[s][0]
-		var b: Vector2 = sides[s][1]
-		var along_x := (b.x - a.x) > (b.y - a.y)
-		var length := (b.x - a.x) if along_x else (b.y - a.y)
-		var t := 0.0
-		var j := 0
-		while t < length - 4.0:
-			var w := minf(length - t, 9.0 + _h01(key + "w%d_%d" % [s, j]) * 14.0)
-			if length - t - w < 6.0:
-				w = length - t
-			var p0 := a + (Vector2(t, 0) if along_x else Vector2(0, t))
-			var p1 := Vector2(p0.x + w, b.y) if along_x else Vector2(b.x, p0.y + w)
-			var tags := {"building": "apartments" if _h01(key + "c%d%d" % [s, j]) < 0.7 else "yes"}
-			if _h01(key + "t%d%d" % [s, j]) < 0.4:
-				tags["building:levels"] = str(maxi(1, base + int(_h01(key + "l%d%d" % [s, j]) * 4.0) - 2))
-			els.append(_way(tags, _rect(p0, p1, turn), lat0, lon0, k))
-			t += w
-			j += 1
 
 
 static func _rect(lo: Vector2, hi: Vector2, turn: float) -> PackedVector2Array:

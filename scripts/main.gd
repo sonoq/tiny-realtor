@@ -205,12 +205,13 @@ func _bake_done(result: Dictionary) -> void:
 	var st: Dictionary = data["stats"]
 	meta["stats"] = {"download_bytes": info["bytes"], "download_ms": info["ms"],
 		"mirror": info.get("mirror", ""), "parse_ms": st["parse_ms"], "bake_ms": st["bake_ms"],
-		"plots": data["plots"].size(), "buildings": st["buildings"], "file_bytes": size}
+		"roads": st["roads"], "blocks": st["blocks"], "plots": st["plots"], "built": st["built"],
+		"file_bytes": size}
 	Store.add_office(meta)
 	print("OFFICE %s (%s): download %d B in %d ms (%s), parse %d ms, bake %d ms, " % [id,
 		job["name"], info["bytes"], info["ms"], info.get("mirror", "?"), st["parse_ms"],
-		st["bake_ms"]] + "%d plots (%d buildings, %d estimated levels), %d roads, saved %d B" % [
-		data["plots"].size(), st["buildings"], st["levels_estimated"], st["roads"], size])
+		st["bake_ms"]] + "%d roads, %d blocks, %d plots (%d built), saved %d B" % [
+		st["roads"], st["blocks"], st["plots"], st["built"], size])
 	open_office(meta)
 
 

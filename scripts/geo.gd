@@ -88,21 +88,58 @@ static func repair(poly: PackedVector2Array) -> PackedVector2Array:
 		return PackedVector2Array()
 	if not Geometry2D.triangulate_polygon(p).is_empty():
 		return p
+	# offset keeps the input's winding, so the outer ring is simply the biggest one
 	var best := PackedVector2Array()
 	for part: PackedVector2Array in Geometry2D.offset_polygon(p, 0.05):
-		if not Geometry2D.is_polygon_clockwise(part) and absf(area(part)) > absf(area(best)):
+		if absf(area(part)) > absf(area(best)):
 			best = part
 	if best.size() >= 3 and not Geometry2D.triangulate_polygon(best).is_empty():
 		return best
 	return PackedVector2Array()
 
 
-# the pieces of a polygon inside a convex clip shape (outer rings only, holes dropped)
+# the pieces of a polygon inside a clip shape (outer rings only, holes dropped); Clipper hands
+# outer rings back counter-clockwise (y up) and holes clockwise, whatever the inputs' winding
 static func clip(poly: PackedVector2Array, shape: PackedVector2Array) -> Array[PackedVector2Array]:
 	var out: Array[PackedVector2Array] = []
 	for part: PackedVector2Array in Geometry2D.intersect_polygons(poly, shape):
-		if Geometry2D.is_polygon_clockwise(part) == Geometry2D.is_polygon_clockwise(shape):
+		if not Geometry2D.is_polygon_clockwise(part):
 			out.append(part)
+	return out
+
+
+# the pieces of a polygon left after cutting a shape out of it (outer rings only)
+static func minus(poly: PackedVector2Array, shape: PackedVector2Array) -> Array[PackedVector2Array]:
+	var out: Array[PackedVector2Array] = []
+	for part: PackedVector2Array in Geometry2D.clip_polygons(poly, shape):
+		if not Geometry2D.is_polygon_clockwise(part):
+			out.append(part)
+	return out
+
+
+# what is left of a polygon after cutting a shape out of it, always as plain polygons without
+# holes: when the shape lands fully inside (which would leave a hole), the polygon is first split
+# in two through the middle of that hole, so the shape bites a notch out of each half instead
+static func cut_out(poly: PackedVector2Array, shape: PackedVector2Array,
+		depth: int = 0) -> Array[PackedVector2Array]:
+	var outers: Array[PackedVector2Array] = []
+	var hole := PackedVector2Array()
+	for part: PackedVector2Array in Geometry2D.clip_polygons(poly, shape):
+		if Geometry2D.is_polygon_clockwise(part):
+			hole = part
+		else:
+			outers.append(part)
+	if hole.is_empty() or depth > 6:
+		return outers
+	var box := bounds(poly).grow(1.0)
+	var x := centre(hole).x
+	var out: Array[PackedVector2Array] = []
+	for half: Rect2 in [Rect2(box.position, Vector2(x - box.position.x, box.size.y)),
+			Rect2(Vector2(x, box.position.y), Vector2(box.end.x - x, box.size.y))]:
+		var rect := PackedVector2Array([half.position, Vector2(half.end.x, half.position.y),
+			half.end, Vector2(half.position.x, half.end.y)])
+		for piece in clip(poly, rect):
+			out.append_array(cut_out(piece, shape, depth + 1))
 	return out
 
 

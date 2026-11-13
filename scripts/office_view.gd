@@ -11,6 +11,8 @@ const VIEW_TOP := Ui.BAR_H
 const VIEW_BOTTOM := Ui.CANVAS.y - Ui.FOOT_H
 const ZOOM_OUT := Rect2(500, 2, 46, 44)
 const ZOOM_IN := Rect2(550, 2, 46, 44)
+const LABEL_SIZE := 11
+const STREET_INK := Color("#f6f2e6")
 
 var office: Dictionary = {}
 
@@ -21,6 +23,9 @@ var _over: Node2D
 var _zoom_i := 1
 var _pan := Vector2.ZERO
 var _stats: Dictionary = {}
+var _street_spots: Array[Dictionary] = []
+# zoom step -> labels that fit without overlapping at that zoom
+var _labels := {}
 
 
 # false when the saved file is missing or unreadable
@@ -35,6 +40,7 @@ func setup(meta: Dictionary) -> bool:
 	if not _view.set_block(block):
 		return false
 	_stats = block.get("stats", {})
+	_street_spots = _view.street_labels()
 	return true
 
 
@@ -126,11 +132,49 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, Ui.CANVAS), Color("#16131d"))
 
 
+# street names placed greedily, longest stretch first, so none overlap at this zoom
+func _labels_for(i: int) -> Array:
+	if _labels.has(i):
+		return _labels[i]
+	var z := float(ZOOMS[i])
+	var spots := _street_spots.duplicate()
+	spots.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["room"] > b["room"])
+	var placed: Array[Rect2] = []
+	var out: Array = []
+	for s: Dictionary in spots:
+		var w := Ui.text_width(s["text"], LABEL_SIZE)
+		# a street label must fit along its stretch of street
+		if w > float(s["room"]) * z * 0.95:
+			continue
+		var at: Vector2 = s["at"] * z
+		var half := Vector2(cos(s["angle"]), sin(s["angle"])).abs() * w * 0.5 + Vector2(6, 9)
+		var box := Rect2(at - half, half * 2.0)
+		var free := true
+		for q in placed:
+			if q.intersects(box):
+				free = false
+				break
+		if free:
+			placed.append(box)
+			out.append({"at": at, "angle": s["angle"], "text": s["text"], "w": w})
+	_labels[i] = out
+	return out
+
+
 func _draw_over() -> void:
+	var view := Rect2(0, VIEW_TOP + 24, Ui.CANVAS.x, VIEW_BOTTOM - VIEW_TOP - 24)
+	for l: Dictionary in _labels_for(_zoom_i):
+		var at: Vector2 = _pan + l["at"]
+		if not view.grow(-8).has_point(at):
+			continue
+		_over.draw_set_transform(at.round(), l["angle"])
+		Ui.label(_over, Vector2(-l["w"] * 0.5, 4).round(), l["text"], LABEL_SIZE, STREET_INK)
+		_over.draw_set_transform(Vector2.ZERO, 0.0)
 	var level: int = office.get("level", 1)
-	var info := "Nivel %d · radio activo %d m de %d m · %s edificios" % [level,
+	var info := "Nivel %d · radio activo %d m de %d m · %s parcelas, %s libres" % [level,
 		roundi(_view.active_radius), roundi(float(office.get("max_radius", Rules.MAX_RADIUS))),
-		Ui.count(int(_stats.get("buildings", 0)))]
+		Ui.count(int(_stats.get("plots", 0))),
+		Ui.count(int(_stats.get("plots", 0)) - int(_stats.get("built", 0)))]
 	var bar := Rect2(0, VIEW_TOP + 1, Ui.CANVAS.x, 24)
 	_over.draw_rect(bar, Ui.SHADE)
 	Ui.text(_over, Vector2(10, VIEW_TOP + 18), info, Ui.SMALL, Ui.INK)
