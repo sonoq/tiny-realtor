@@ -153,6 +153,11 @@ static func square(at: Vector2, half: float) -> PackedVector2Array:
 		at + Vector2(half, half), at + Vector2(-half, half)]))
 
 
-# a stable 0..1 hash of any key
+# a stable 0..1 hash of any key; String.hash alone barely changes in its low bits when only the
+# last character does ("a1" / "b1"), so it is mixed first
 static func h01(key: String) -> float:
-	return float(key.hash() & 0xFFFF) / 65536.0
+	var x := key.hash() & 0xFFFFFFFF
+	x = ((x ^ (x >> 16)) * 0x45d9f3b) & 0xFFFFFFFF
+	x = ((x ^ (x >> 16)) * 0x45d9f3b) & 0xFFFFFFFF
+	x = x ^ (x >> 16)
+	return float(x & 0xFFFF) / 65536.0

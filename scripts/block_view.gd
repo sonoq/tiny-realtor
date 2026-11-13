@@ -27,6 +27,8 @@ var focus := Vector2.ZERO
 var active_radius := 0.0
 # the finished drawing, null until `drawn`
 var texture: Texture2D
+# drawing positions over the roofs the player owns, for income pops
+var pops: Array[Vector2] = []
 # milliseconds spent building the ops and on the GPU passes, for the logs
 var build_ms := 0
 var draw_ms := 0
@@ -68,6 +70,7 @@ func set_block(block: Dictionary) -> bool:
 	_area = AreaBuilder.new(_iso, block, active_radius)
 	_area.build()
 	_area.objects = DepthSort.order(_area.objects)
+	pops = _area.pops
 	build_ms = Time.get_ticks_msec() - t0
 	return true
 
@@ -93,7 +96,7 @@ func _render() -> void:
 	under.material = WorldShader.ground_material(ground, shade, focus, Iso.S,
 		active_radius if active_radius > 0.0 else 1.0e9)
 	var world := _canvas(MODE_WORLD)
-	world.material = WorldShader.facade_material()
+	world.material = WorldShader.facade_material(Sprites.atlas())
 	var w := _viewport(vs, under)
 	w.add_child(world)
 	await RenderingServer.frame_post_draw
@@ -226,13 +229,16 @@ class Canvas:
 					quad = Iso.moved(quad, off)
 				draw_polygon(quad, PackedColorArray([code, code, code, code]), op[2])
 			Painter.OP_TEX:
+				# a quad whose UVs point into the sprite atlas (offset so the shader knows)
 				var sp := Sprites.get_sprite(op[1])
-				var tex: Texture2D = sp[0]
-				if how == 2:
-					tex = sp[1]
-				elif how == 3:
-					tex = sp[2]
-				draw_texture(tex, op[2] + sp[3] + off)
+				var r := Rect2(op[2] + sp[1] + off, sp[2])
+				var a := Rect2(Sprites.atlas_rect(op[1]))
+				var base := Vector2(WorldShader.ATLAS_UV, 0)
+				var code := Color8(how, 0, 0)
+				draw_polygon(PackedVector2Array([r.position, Vector2(r.end.x, r.position.y),
+					r.end, Vector2(r.position.x, r.end.y)]), PackedColorArray([code, code, code,
+					code]), PackedVector2Array([a.position + base, Vector2(a.end.x,
+					a.position.y) + base, a.end + base, Vector2(a.position.x, a.end.y) + base]))
 
 	static func _tone(idx: int, how: int) -> Color:
 		match how:

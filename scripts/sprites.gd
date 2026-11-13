@@ -1,10 +1,11 @@
 class_name Sprites
 extends RefCounted
 
-# The office view's little pixel sprites, each drawn once into a texture in three versions: in
-# colour, faded (outside the active radius) and as a solid ink silhouette (for the one-pixel
-# outline pass). Recipes are the mockup's: trees, flags, the red "$" sale sign, street lamps,
-# people, and the framed tags (price tags, the REALTOR billboard) with the 3x5 micro font.
+# The office view's little pixel sprites as palette-index maps, packed into one atlas texture
+# the world shader reads raw (a canvas item's own TEXTURE is colour-converted on some renderers,
+# which would knock the pixels off the palette); the shader fades them or turns them to ink.
+# Recipes are the mockup's: trees, flags, the red "$" sale sign, street lamps, people, and the
+# framed tags (price tags, the REALTOR billboard) with the 3x5 micro font.
 # A sprite is placed by its anchor: the pixel its recipe calls (0, 0), usually the foot.
 
 const MICRO := {
@@ -27,8 +28,12 @@ const MICRO := {
 	"©": "011110100101101001100101011110",
 }
 
-# name -> [colour texture, faded texture, ink texture, anchor offset]
+# name -> [index image, anchor offset, size]
 static var _cache := {}
+# name -> its rect in the atlas
+static var _rects := {}
+static var _atlas: ImageTexture
+static var _atlas_n := -1
 
 
 static func micro_w(s: String) -> int:
@@ -76,7 +81,7 @@ static func frame(px: Dictionary, x0: int, y0: int, x1: int, y1: int, border: in
 				px[s + Vector2i(dx, dy)] = Pal.i("INK") if dx == 1 and dy == 1 else border
 
 
-# the sprite's three textures and its anchor, built on first use
+# the sprite's index image, anchor and size, built on first use
 static func get_sprite(key: String) -> Array:
 	if _cache.has(key):
 		return _cache[key]
@@ -113,17 +118,43 @@ static func _bake(px: Dictionary) -> Array:
 		lo = lo.min(q)
 		hi = hi.max(q)
 	var size := hi - lo + Vector2i.ONE
-	var imgs: Array[Image] = []
-	for _k in 3:
-		imgs.append(Image.create(size.x, size.y, false, Image.FORMAT_RGBA8))
-	var ink := Pal.color(Pal.i("INK"))
+	var img := Image.create(size.x, size.y, false, Image.FORMAT_RGBA8)
 	for q: Vector2i in px:
-		var idx: int = px[q]
-		imgs[0].set_pixelv(q - lo, Pal.color(idx))
-		imgs[1].set_pixelv(q - lo, Pal.color(Pal.fade(idx)))
-		imgs[2].set_pixelv(q - lo, ink)
-	return [ImageTexture.create_from_image(imgs[0]), ImageTexture.create_from_image(imgs[1]),
-		ImageTexture.create_from_image(imgs[2]), Vector2(lo)]
+		img.set_pixelv(q - lo, Pal.code(px[q]))
+	return [img, Vector2(lo), Vector2(size)]
+
+
+# every sprite made so far packed on shelves into one texture of palette indices
+static func atlas() -> ImageTexture:
+	if _atlas != null and _atlas_n == _cache.size():
+		return _atlas
+	var keys := _cache.keys()
+	keys.sort_custom(func(a: String, b: String) -> bool:
+		return _cache[a][2].y > _cache[b][2].y)
+	var width := 512
+	var x := 0
+	var y := 0
+	var shelf := 0
+	_rects.clear()
+	for k: String in keys:
+		var sz: Vector2 = _cache[k][2]
+		if x + int(sz.x) + 1 > width:
+			x = 0
+			y += shelf + 1
+			shelf = 0
+		_rects[k] = Rect2i(x, y, int(sz.x), int(sz.y))
+		x += int(sz.x) + 1
+		shelf = maxi(shelf, int(sz.y))
+	var img := Image.create(width, maxi(1, y + shelf + 1), false, Image.FORMAT_RGBA8)
+	for k: String in keys:
+		img.blit_rect(_cache[k][0], Rect2i(Vector2i.ZERO, _rects[k].size), _rects[k].position)
+	_atlas = ImageTexture.create_from_image(img)
+	_atlas_n = _cache.size()
+	return _atlas
+
+
+static func atlas_rect(key: String) -> Rect2i:
+	return _rects.get(key, Rect2i())
 
 
 static func _put(px: Dictionary, x: int, y: int, name: String) -> void:

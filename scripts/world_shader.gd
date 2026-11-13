@@ -4,8 +4,8 @@ extends RefCounted
 # The two shaders that draw an office area pixel-exact, generated at run time so they can name
 # palette entries (Pal.shader_consts) the way the mockup's Python does.
 #
-# FACADE runs on everything drawn in the world pass. Plain polygons and textures pass through
-# (UV.x < 8000). A wall is a quad whose vertex data carries the facade "shader" of the mockup:
+# FACADE runs on everything drawn in the world pass. Plain polygons pass through (UV.x < 4000),
+# sprites read palette indices from the atlas (4000 <= UV.x < 8000). A wall is a quad whose vertex data carries the facade "shader" of the mockup:
 #   COLOR.r = style | k << 4 | fade << 6 | door << 7, COLOR.g = ramp | variant << 5,
 #   COLOR.b = h (rows above the base, 0..255), COLOR.a = n (columns, for doors),
 #   UV.x = 16384 + seed * 1024 + i (column from the wall's first corner),
@@ -17,6 +17,8 @@ extends RefCounted
 # texture of the mockup (pavement tiles, asphalt and grass speckle, kerbs), then shades what lies
 # in a cast shadow and dims what lies outside the active radius.
 
+# sprite quads carry atlas pixel coordinates in UV, shifted by this
+const ATLAS_UV := 4096.0
 const STYLE_INK := 1
 const STYLE_APT := 2
 const STYLE_OFFICE := 3
@@ -259,10 +261,17 @@ void vertex() {
 }
 
 void fragment() {
-	if (UV.x < 8000.0) {
-		vec4 t = texture(TEXTURE, UV) * COLOR;
+	if (UV.x >= 4000.0 && UV.x < 8000.0) {
+		// a sprite: palette indices from the atlas; COLOR.r = 1 colour, 2 faded, 3 ink
+		vec4 t = texelFetch(sprites, ivec2(floor(UV - vec2(4096.0, 0.0))), 0);
 		if (t.a < 0.5) discard;
-		COLOR = vec4(t.rgb, 1.0);
+		int idx = int(round(t.r * 255.0));
+		int how = int(round(COLOR.r * 255.0));
+		if (how == 2) idx = pal_at(idx, 3);
+		if (how == 3) idx = INK;
+		COLOR = vec4(texelFetch(lut, ivec2(idx, 0), 0).rgb, 1.0);
+	} else if (UV.x < 4000.0) {
+		COLOR = vec4(COLOR.rgb, 1.0);
 	} else {
 		int pr = int(round(COLOR.r * 255.0));
 		int pg = int(round(COLOR.g * 255.0));
@@ -353,14 +362,16 @@ static func _header() -> String:
 	return out
 
 
-static func facade_material() -> ShaderMaterial:
+static func facade_material(atlas: Texture2D) -> ShaderMaterial:
 	if _facade == null:
 		_facade = Shader.new()
 		_facade.code = "shader_type canvas_item;\nrender_mode blend_disabled;\n" \
-			+ "varying vec2 lp;\n" + _header() + _COMMON + _FACADE_BODY
+			+ "varying vec2 lp;\nuniform sampler2D sprites : filter_nearest;\n" + _header() \
+			+ _COMMON + _FACADE_BODY
 	var m := ShaderMaterial.new()
 	m.shader = _facade
 	m.set_shader_parameter("lut", Pal.lut())
+	m.set_shader_parameter("sprites", atlas)
 	return m
 
 

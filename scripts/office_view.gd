@@ -19,6 +19,9 @@ const LEVEL_BAR := Rect2(12, 552, 576, 20)
 const ANCHOR := Vector2(300, 330)
 # street names are sheared along the street when it runs at most this steep on screen
 const SHEAR_MAX := 0.75
+const POP_EVERY := 2.4
+const POP_LIFE := 1.4
+const POP_RISE := 16.0
 
 var office: Dictionary = {}
 
@@ -32,6 +35,8 @@ var _street_spots: Array[Dictionary] = []
 var _owned := 1
 # zoom step -> labels that fit without overlapping at that zoom
 var _labels := {}
+# income pops: a gold "+$" rising off the roofs the player owns, one after another
+var _pop_t := 0.0
 
 
 # false when the saved file is missing or unreadable
@@ -78,6 +83,15 @@ func _on_drawn() -> void:
 	print("OfficeView: %s drawn %dx%d, build %d ms, gpu %d ms" % [office.get("id", ""),
 		roundi(_view.size.x), roundi(_view.size.y), _view.build_ms, _view.draw_ms])
 	_over.queue_redraw()
+
+
+func _process(delta: float) -> void:
+	if is_drawn() and not _view.pops.is_empty():
+		var before := int(_pop_t * 10.0)
+		_pop_t += delta
+		# the pop moves in whole steps, ten a second, like the rest of the pixel art
+		if int(_pop_t * 10.0) != before:
+			_over.queue_redraw()
 
 
 func _zoom() -> float:
@@ -186,6 +200,7 @@ func _draw_over() -> void:
 		Ui.text_in(_over, Rect2(0, 260, 600, 60), "Dibujando el barrio…", Ui.TEXT, Ui.MUTED)
 	else:
 		_draw_streets()
+		_draw_pops()
 	var city := CityDb.get_city(office["city"])
 	Ui.header(_over, office.get("name", "Oficina"), true, hot)
 	var plots := int(_stats.get("plots", 0))
@@ -203,6 +218,19 @@ func _draw_over() -> void:
 		"Radio %d / %d m" % [active, full], Ui.TEXT, Ui.MUTED)
 	Ui.bar(_over, LEVEL_BAR, float(active) / maxf(1.0, full))
 	Ui.footer(_over, "")
+
+
+func _draw_pops() -> void:
+	var spots := _view.pops
+	for k in mini(spots.size(), 6):
+		var t := fposmod(_pop_t - k * 0.7, POP_EVERY)
+		if t > POP_LIFE:
+			continue
+		var px := maxf(2.0, _zoom())
+		var rise := floorf(t * 10.0) / (POP_LIFE * 10.0) * POP_RISE * px * 0.5
+		var w := Ui.micro_width("+$", px)
+		var at := (_pan + spots[k] * _zoom() - Vector2(w * 0.5, rise)).round()
+		Ui.micro(_over, at, "+$", Ui.GOLD, px, true)
 
 
 # street names written along their streets: sheared to the street's slope, so the letters keep

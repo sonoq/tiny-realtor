@@ -78,6 +78,12 @@ const _BACK_ICON: Array[String] = [
 	"...11...11111..",
 	"....1..........",
 ]
+const _GLYPHS := {
+	"<": ["....1", "...11", "..111", ".1111", "11111", ".1111", "..111", "...11", "....1"],
+	">": ["1....", "11...", "111..", "1111.", "11111", "1111.", "111..", "11...", "1...."],
+	"+": ["..11..", "..11..", "111111", "111111", "..11..", "..11.."],
+	"-": ["111111", "111111"],
+}
 # letters the pixel fonts lack (Polish, Czech, romanised Japanese...) fall back to their base
 const _FROM := "ĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľĿŀŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŹźŻżŽž’"
 const _TO := "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjKkLlLlLlLlLlNnNnNnOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyZzZzZz'"
@@ -235,12 +241,23 @@ static func button(c: CanvasItem, r: Rect2, label: String, hot: Vector2,
 	text_in(c, r, label, TEXT, ink, kind, not accent and not off)
 
 
-# an arrow button (pager, zoom): cyan with a dark glyph, like Battlegrounds' settings arrows
+# an arrow button (pager, zoom): cyan with a dark glyph, like Battlegrounds' settings arrows;
+# glyph is "<", ">", "+" or "-", drawn as pixel art on a 3 px grid
 static func arrow(c: CanvasItem, r: Rect2, glyph: String, hot: Vector2, off: bool = false) -> void:
 	var over := r.has_point(hot) and not off
 	var back := SHEET if off else (CYAN.lightened(HOT_LIFT) if over else CYAN)
 	plate(c, r, back, RIM_DIM if off else CREAM, 15)
-	text_in(c, r, glyph, BIG, SL3 if off else VOID, BOLD, false)
+	var rows: Array = _GLYPHS.get(glyph, [])
+	if rows.is_empty():
+		return
+	var px := 3.0
+	var size := Vector2(String(rows[0]).length(), rows.size()) * px
+	var at := (r.get_center() - size * 0.5).round()
+	for j in rows.size():
+		var row: String = rows[j]
+		for i in row.length():
+			if row[i] == "1":
+				c.draw_rect(Rect2(at + Vector2(i, j) * px, Vector2(px, px)), SL3 if off else VOID)
 
 
 static func back_button(c: CanvasItem, hot: Vector2) -> void:
@@ -283,12 +300,14 @@ static func footer(c: CanvasItem, note: String) -> void:
 	var y := CANVAS.y - 16.0
 	var w := micro_width(CREDIT)
 	micro(c, Vector2(CANVAS.x - 12.0 - w, y), CREDIT, MUTED, 2.0, true)
-	if note != "":
-		micro(c, Vector2(12, y), note, MUTED, 2.0, true)
+	var x := 12.0
 	if Overpass.fixture_mode:
-		var tag := Rect2(12, CANVAS.y - 44, text_width(TEST_TAG, TEXT, NARROW) + 20, 26)
+		var tag := Rect2(x, y - 6, micro_width(TEST_TAG) + 12, 22)
 		chip(c, tag, RED, CREAM)
-		text_in(c, tag, TEST_TAG, TEXT, CREAM, NARROW, false)
+		micro(c, tag.position + Vector2(6, 6), TEST_TAG, CREAM)
+		x = tag.end.x + 12
+	if note != "":
+		micro(c, Vector2(x, y), note, MUTED, 2.0, true)
 
 
 # a framed progress bar (the mockup's office level bar)

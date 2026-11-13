@@ -2,8 +2,8 @@ extends SceneTree
 
 # Renders saved office areas with BlockView alone, without the rest of the game, and saves for
 # each: the whole drawing (<id>_full.png, one art pixel per pixel) and a 600x600 crop around the
-# office at the game's default zoom (<id>_x2.png). For looking at the art quickly; needs a display
-# (xvfb-run, see screenshot.sh).
+# office at the game's default zoom (<id>_x2.png). It fails when any pixel is off the palette.
+# For looking at the art quickly; needs a display (xvfb-run, see screenshot.sh).
 #
 #   godot --path . --rendering-driver opengl3 --audio-driver Dummy \
 #       --script res://tools/cloud/render_office.gd -- --out=/abs/dir [--file=/abs/office.json ...]
@@ -47,7 +47,28 @@ func _init() -> void:
 		var crop := img.get_region(Rect2i(at, half * 2))
 		crop.resize(600, 600, Image.INTERPOLATE_NEAREST)
 		crop.save_png("%s/%s_x2.png" % [_out, id])
-		print("RENDER %s %dx%d build %d ms draw %d ms" % [id, img.get_width(), img.get_height(),
-			view.build_ms, view.draw_ms])
+		var off := _off_palette(img)
+		print("RENDER %s %dx%d build %d ms draw %d ms, %d pixels off the palette" % [id,
+			img.get_width(), img.get_height(), view.build_ms, view.draw_ms, off])
+		if off > 0:
+			printerr("RENDER FAILED: %s has %d pixels off the palette" % [id, off])
+			quit(1)
+			return
 		view.queue_free()
 	quit(0)
+
+
+# opaque pixels whose colour is not one of Pal's: the drawing must never blend
+func _off_palette(img: Image) -> int:
+	var ok := {}
+	for k in Pal.NAMES.size():
+		ok[Pal.color(k).to_rgba32() | 0xFF] = true
+	var data := img.get_data()
+	var n := 0
+	for i in range(0, data.size(), 4):
+		if data[i + 3] == 0:
+			continue
+		var c := (data[i] << 24) | (data[i + 1] << 16) | (data[i + 2] << 8) | 0xFF
+		if not ok.has(c):
+			n += 1
+	return n

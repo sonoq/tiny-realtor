@@ -18,7 +18,7 @@ const SLAB_DEPTH := 14.0
 const FACADES: Array[String] = ["CRM", "OCH", "SAL", "STN", "CRM", "OCH"]
 # the share of empty plots with a "for sale" sign inside the active radius, and how many of the
 # nearest get a price tag over them
-const SIGN_EVERY := 0.22
+const SIGN_EVERY := 0.15
 const TAGS := 5
 # placeholder asking price per square metre, until the game has an economy
 const PRICE_M2 := 300.0
@@ -40,6 +40,8 @@ var shadows: Array = []
 var pre: Array = []
 var objects: Array = []
 var post: Array = []
+# where income pops rise from: over the roofs of what the player owns
+var pops: Array[Vector2] = []
 # the highest pixel any object reaches above its ground point, for the drawing's bounds
 var tallest := 40.0
 
@@ -47,6 +49,8 @@ var _block: Dictionary
 var _pt: Painter
 var _junctions: Array[Dictionary] = []
 var _lots: Array[Dictionary] = []
+# screen boxes price tags must keep clear of (the office's sign)
+var _keep_clear: Array[Rect2] = []
 
 
 func _init(camera: Iso, block: Dictionary, active_radius: float) -> void:
@@ -447,8 +451,7 @@ func _ops_box(ops: Array) -> Rect2:
 				r = op[1]
 			Painter.OP_TEX:
 				var sp := Sprites.get_sprite(op[1])
-				var t: Texture2D = sp[0]
-				r = Rect2(op[2] + sp[3], t.get_size())
+				r = Rect2(op[2] + sp[1], sp[2])
 		box = r if first else box.merge(r)
 		first = false
 	return box
@@ -478,6 +481,8 @@ func _building(plot: Dictionary) -> void:
 	var levels := int(plot.get("levels", 4))
 	var facade := Pal.ramp_of(FACADES[int(Iso.h01(id + "fac") * FACADES.size())])
 	var roof := Pal.ramp_of("TEAL" if owned else "TER")
+	if owned:
+		pops.append(iso.pv(Iso.centroid(poly), top_of(tier, levels)))
 	if tier <= 2 and plot["zone"] == "industrial":
 		_shed(id, poly, owned)
 	elif tier <= 2:
@@ -697,11 +702,21 @@ func _office_at(id: String, poly: PackedVector2Array) -> void:
 	_pt.prism(poly, 0.0, hz, WorldShader.STYLE_OFFICE, Pal.ramp_of("STN"), Pal.ramp_of("TEAL"))
 	var c := Iso.centroid(poly)
 	_pt.tex("billboard", iso.pv(c, hz))
+	var sign := Sprites.get_sprite("billboard")
+	_keep_clear.append(Rect2(iso.pv(c, hz) + sign[1], sign[2]).grow(4.0))
+	# the flag on the leftmost corner, or on the sign when the building is too narrow for both
 	var left := poly[0]
+	var right := poly[0]
 	for q in poly:
 		if q.x + q.y < left.x + left.y:
 			left = q
-	_pt.tex("flag:9:cyan", iso.pv(left + (c - left).normalized() * 1.6, hz))
+		if q.x + q.y > right.x + right.y:
+			right = q
+	if iso.pv(right).x - iso.pv(left).x > 56.0:
+		_pt.tex("flag:9:cyan", iso.pv(left + (c - left).normalized() * 1.2, hz))
+	else:
+		_pt.tex("flag:7:cyan", iso.pv(c, hz) + Vector2(17, -20))
+	pops.append(iso.pv(c, hz + 24.0))
 	_close(hz)
 	tallest = maxf(tallest, hz + 30.0)
 
@@ -736,26 +751,32 @@ func _trees() -> void:
 			_tree(q, "st%s_%d" % [b["id"], k], false))
 
 
-# trees on a jittered grid inside a polygon, about one per `every` square metres
+# trees scattered at random inside a polygon, about one per `every` square metres, never two
+# closer than half the spacing, so a garden reads as a grove rather than a grid
 func _scatter(poly: PackedVector2Array, seed: String, every: float) -> void:
 	var inner := Iso.offset(poly, -2.0)
 	if inner.size() < 3:
 		return
 	var box := Geo.bounds(inner)
-	var step := sqrt(every)
-	var y := box.position.y + step * 0.5
-	var k := 0
-	while y < box.end.y:
-		var x := box.position.x + step * 0.5
-		while x < box.end.x:
-			k += 1
-			var q := Vector2(x, y) + Vector2(Iso.h01(seed + "a%d" % k) - 0.5,
-				Iso.h01(seed + "b%d" % k) - 0.5) * step * 0.8
-			x += step
-			if q.length() > radius - 3.0 or not Geometry2D.is_point_in_polygon(q, inner):
-				continue
-			_tree(q, seed + str(k), Iso.h01(seed + "big%d" % k) < 0.3)
-		y += step
+	var want := int(Iso.area(inner) / every)
+	var gap := sqrt(every) * 0.55
+	var placed := PackedVector2Array()
+	for k in want * 3:
+		if placed.size() >= want:
+			break
+		var q := box.position + box.size * Vector2(Iso.h01(seed + "a%d" % k),
+			Iso.h01(seed + "b%d" % k))
+		if q.length() > radius - 3.0 or not Geometry2D.is_point_in_polygon(q, inner):
+			continue
+		var clear := true
+		for o in placed:
+			if o.distance_to(q) < gap:
+				clear = false
+				break
+		if not clear:
+			continue
+		placed.append(q)
+		_tree(q, seed + str(k), Iso.h01(seed + "big%d" % k) < 0.3)
 
 
 # calls fn at points every `every` m around a polygon grown by `out` m, away from its corners
@@ -845,13 +866,25 @@ func _car(at: Vector2, dir: Vector2, tint: String, seed: String) -> void:
 	_close(3.0)
 
 
-# price tags over the signed lots nearest the office
+# price tags over the signed lots nearest the office, never one over another
 func _tags() -> void:
 	_lots.sort_custom(func(p: Dictionary, q: Dictionary) -> bool:
 		return (p["at"] as Vector2).length() < (q["at"] as Vector2).length())
-	for lot in _lots.slice(0, TAGS):
+	var placed: Array[Rect2] = _keep_clear.duplicate()
+	for lot in _lots:
+		if placed.size() >= TAGS + _keep_clear.size():
+			break
 		var price := maxi(1, roundi(float(lot["area"]) * PRICE_M2 / 1000.0))
-		post.append([Painter.OP_TEX, "tag:$%dK" % price, iso.pv(lot["at"])])
+		var key := "tag:$%dK" % price
+		var at := iso.pv(lot["at"])
+		var sp := Sprites.get_sprite(key)
+		var box := Rect2(at + sp[1], sp[2]).grow(3.0)
+		var free := true
+		for q in placed:
+			free = free and not q.intersects(box)
+		if free:
+			placed.append(box)
+			post.append([Painter.OP_TEX, key, at])
 
 
 # --- helpers -------------------------------------------------------------------------------------
