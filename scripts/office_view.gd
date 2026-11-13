@@ -18,7 +18,7 @@ const LEVEL_BAR := Rect2(12, 552, 576, 20)
 # where on screen the office sits: a little below the middle, under the HUD's title
 const ANCHOR := Vector2(300, 330)
 # street names are sheared along the street when it runs at most this steep on screen
-const SHEAR_MAX := 0.75
+const SHEAR_MAX := 1.0
 const POP_EVERY := 2.4
 const POP_LIFE := 1.4
 const POP_RISE := 16.0
@@ -162,34 +162,47 @@ func _draw() -> void:
 	Ui.backdrop(self)
 
 
-# street names placed greedily, longest stretch first, so none overlap at this zoom
+# street names placed greedily, nearest the office first, so none overlap at this zoom
 func _labels_for(i: int) -> Array:
 	if _labels.has(i):
 		return _labels[i]
 	var z := float(ZOOMS[i])
 	var spots := _street_spots.duplicate()
-	spots.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a["room"] > b["room"])
+	# nearest the office first: that is where the player looks
+	spots.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return (a["metres"] as Vector2).length() < (b["metres"] as Vector2).length())
 	var placed: Array[Rect2] = []
+	if _view.sign_box.size != Vector2.ZERO:
+		placed.append(Rect2(_view.sign_box.position * z, _view.sign_box.size * z).grow(6.0))
 	var out: Array = []
 	for s: Dictionary in spots:
 		var w := Ui.text_width(s["text"], Ui.TEXT, Ui.NARROW)
-		# a street label must fit along its stretch of street
-		if w > float(s["room"]) * z * 0.9:
+		# a street label may overhang its stretch of street a little, not run across the map
+		if w > float(s["room"]) * z * 1.5:
 			continue
 		var at: Vector2 = s["at"] * z
 		var slope := tan(float(s["angle"]))
 		var sheared := absf(slope) <= SHEAR_MAX
 		if not sheared:
 			slope = 0.0
-		var half := Vector2(w * 0.5 + 8.0, absf(slope) * w * 0.5 + 16.0)
-		var box := Rect2(at - half, half * 2.0)
+		# a sheared label is a thin slanted band: cover it with a few small boxes along it
+		var boxes: Array[Rect2] = []
+		var parts := 6
+		var step := (w + 16.0) / parts
+		for k in parts:
+			var x := -w * 0.5 - 8.0 + step * (k + 0.5)
+			boxes.append(Rect2(at + Vector2(x, x * slope) - Vector2(step * 0.5, 14.0),
+				Vector2(step, 22.0)))
 		var free := true
-		for q in placed:
-			if q.intersects(box):
-				free = false
+		for b in boxes:
+			for q in placed:
+				if q.intersects(b):
+					free = false
+					break
+			if not free:
 				break
 		if free:
-			placed.append(box)
+			placed.append_array(boxes)
 			out.append({"at": at, "slope": slope, "text": s["text"], "w": w})
 	_labels[i] = out
 	return out
@@ -199,7 +212,9 @@ func _draw_over() -> void:
 	if not is_drawn():
 		Ui.text_in(_over, Rect2(0, 260, 600, 60), "Dibujando el barrio…", Ui.TEXT, Ui.MUTED)
 	else:
-		_draw_streets()
+		# at x1 the art is half size and the names would bury it
+		if _zoom_i > 0:
+			_draw_streets()
 		_draw_pops()
 	var city := CityDb.get_city(office["city"])
 	Ui.header(_over, office.get("name", "Oficina"), true, hot)
@@ -236,10 +251,11 @@ func _draw_pops() -> void:
 # street names written along their streets: sheared to the street's slope, so the letters keep
 # their vertical strokes and lie on the iso grid like painted road signs
 func _draw_streets() -> void:
-	var view := Rect2(0, 120, Ui.CANVAS.x, 400)
+	var view := Rect2(8, 120, Ui.CANVAS.x - 16, 400)
 	for l: Dictionary in _labels_for(_zoom_i):
 		var at: Vector2 = (_pan + l["at"]).round()
-		if not view.has_point(at):
+		var half := Vector2(float(l["w"]) * 0.5, float(l["w"]) * 0.5 * float(l["slope"]))
+		if not view.has_point(at - half) or not view.has_point(at + half):
 			continue
 		var w: float = l["w"]
 		var slope: float = l["slope"]

@@ -49,8 +49,8 @@ var _block: Dictionary
 var _pt: Painter
 var _junctions: Array[Dictionary] = []
 var _lots: Array[Dictionary] = []
-# screen boxes price tags must keep clear of (the office's sign)
-var _keep_clear: Array[Rect2] = []
+# screen boxes price tags and labels must keep clear of (the office's sign)
+var keep_clear: Array[Rect2] = []
 
 
 func _init(camera: Iso, block: Dictionary, active_radius: float) -> void:
@@ -703,7 +703,7 @@ func _office_at(id: String, poly: PackedVector2Array) -> void:
 	var c := Iso.centroid(poly)
 	_pt.tex("billboard", iso.pv(c, hz))
 	var sign := Sprites.get_sprite("billboard")
-	_keep_clear.append(Rect2(iso.pv(c, hz) + sign[1], sign[2]).grow(4.0))
+	keep_clear.append(Rect2(iso.pv(c, hz) + sign[1], sign[2]).grow(4.0))
 	# the flag on the leftmost corner, or on the sign when the building is too narrow for both
 	var left := poly[0]
 	var right := poly[0]
@@ -870,9 +870,9 @@ func _car(at: Vector2, dir: Vector2, tint: String, seed: String) -> void:
 func _tags() -> void:
 	_lots.sort_custom(func(p: Dictionary, q: Dictionary) -> bool:
 		return (p["at"] as Vector2).length() < (q["at"] as Vector2).length())
-	var placed: Array[Rect2] = _keep_clear.duplicate()
+	var placed: Array[Rect2] = keep_clear.duplicate()
 	for lot in _lots:
-		if placed.size() >= TAGS + _keep_clear.size():
+		if placed.size() >= TAGS + keep_clear.size():
 			break
 		var price := maxi(1, roundi(float(lot["area"]) * PRICE_M2 / 1000.0))
 		var key := "tag:$%dK" % price

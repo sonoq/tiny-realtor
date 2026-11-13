@@ -29,6 +29,8 @@ var active_radius := 0.0
 var texture: Texture2D
 # drawing positions over the roofs the player owns, for income pops
 var pops: Array[Vector2] = []
+# the office's REALTOR sign in the drawing, which labels keep clear of
+var sign_box := Rect2()
 # milliseconds spent building the ops and on the GPU passes, for the logs
 var build_ms := 0
 var draw_ms := 0
@@ -71,6 +73,8 @@ func set_block(block: Dictionary) -> bool:
 	_area.build()
 	_area.objects = DepthSort.order(_area.objects)
 	pops = _area.pops
+	if not _area.keep_clear.is_empty():
+		sign_box = _area.keep_clear[0]
 	build_ms = Time.get_ticks_msec() - t0
 	return true
 
@@ -130,19 +134,18 @@ func project(m: Vector2) -> Vector2:
 	return _iso.p(m.x, m.y)
 
 
-# street name labels: for each name, spots on its longest straight stretches at least 160 m
-# apart, with the on-screen direction of the street there; the caller drops the overlaps
+# street name labels: for each name, spots along its straight stretches (every 60 m on a long
+# one, so a name shows near the office too, never two of one name closer than 60 m), with the
+# on-screen direction and the room the stretch offers; the caller drops the overlaps
 func street_labels() -> Array[Dictionary]:
 	var by_name := {}
 	for road: Dictionary in _block["roads"]:
 		var name: String = road["name"] if road["name"] != "" else road.get("ref", "")
 		if name == "" or road["kind"] in ["motorway", "trunk"] and road["name"] == "":
 			continue
-		var line := AreaBuilder._pts(road["line"])
-		for i in range(1, line.size()):
-			if not by_name.has(name):
-				by_name[name] = []
-			by_name[name].append([line[i - 1], line[i]])
+		if not by_name.has(name):
+			by_name[name] = []
+		by_name[name].append_array(_straight_runs(AreaBuilder._pts(road["line"])))
 	var out: Array[Dictionary] = []
 	for name: String in by_name:
 		var segs: Array = by_name[name]
@@ -152,25 +155,46 @@ func street_labels() -> Array[Dictionary]:
 		for seg: Array in segs:
 			var a: Vector2 = seg[0]
 			var b: Vector2 = seg[1]
-			if a.distance_to(b) < 35.0:
+			var length := a.distance_to(b)
+			if length < 25.0:
 				break
-			var mid := (a + b) * 0.5
-			if mid.length() > _radius - 15.0:
-				continue
-			var far := true
-			for q in spots:
-				far = far and q.distance_to(mid) > 160.0
-			if not far:
-				continue
-			spots.append(mid)
 			var d := project(b) - project(a)
 			var angle := d.angle()
 			if angle > PI * 0.5:
 				angle -= PI
 			elif angle < -PI * 0.5:
 				angle += PI
-			out.append({"text": name, "at": project(mid), "angle": angle,
-				"room": project(a).distance_to(project(b)), "metres": mid})
+			var n := maxi(1, int(length / 60.0))
+			for k in n:
+				var at := a.lerp(b, (k + 0.5) / n)
+				if at.length() > _radius - 15.0:
+					continue
+				var far := true
+				for q in spots:
+					far = far and q.distance_to(at) > 60.0
+				if not far:
+					continue
+				spots.append(at)
+				out.append({"text": name, "at": project(at), "angle": angle,
+					"room": project(a).distance_to(project(b)) / n, "metres": at})
+	return out
+
+
+# a polyline cut into nearly straight runs (bends under 12 degrees are ignored), so a street
+# mapped as many short pieces still offers its long stretches for a name
+static func _straight_runs(line: PackedVector2Array) -> Array:
+	var out: Array = []
+	if line.size() < 2:
+		return out
+	var start := line[0]
+	var dir := (line[1] - line[0]).normalized()
+	for i in range(1, line.size()):
+		var d := (line[i] - line[i - 1]).normalized()
+		if d.dot(dir) < cos(deg_to_rad(12.0)):
+			out.append([start, line[i - 1]])
+			start = line[i - 1]
+			dir = d
+	out.append([start, line[line.size() - 1]])
 	return out
 
 
