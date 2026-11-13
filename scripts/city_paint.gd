@@ -3,18 +3,20 @@ extends Node2D
 
 # Draws a baked city map (format tiny-realtor-city, see CityBaker) once, top-down, north up, at
 # M_PER_PX metres per pixel, for a SubViewport that CityMap scales up with nearest filtering.
+# Style A: a night-time slate map in the office view's palette, so the UI's cream, gold and cyan
+# read on it: slate land, deep teal sea, dark green parks, roads from slate to gold by class.
 # Pixel (0, 0) is the north-west corner of the city box.
 
 const M_PER_PX := 12.0
-const LAND := Color("#cbc09f")
-const LAND_DOT := Color("#c2b694")
-const SEA := Color("#4f7fae")
-const SEA_DOT := Color("#5a8ab8")
-const WATER := Color("#5b8dbb")
-const PARK := Color("#94b86e")
+const LAND := Color("#1d232d")
+const LAND_DOT := Color("#12151b")
+const SEA := Color("#0f2f40")
+const SEA_DOT := Color("#16607e")
+const WATER := Color("#16607e")
+const PARK := Color("#2f5c3c")
 const ROAD := {
-	"motorway": [Color("#d9644a"), 3.0], "trunk": [Color("#e58a4a"), 2.0],
-	"primary": [Color("#f4c95d"), 2.0], "secondary": [Color("#ffffff"), 1.0],
+	"motorway": [Color("#ffc94a"), 3.0], "trunk": [Color("#c99e3a"), 2.0],
+	"primary": [Color("#c3cdd8"), 2.0], "secondary": [Color("#45546e"), 1.0],
 }
 const ORDER := ["secondary", "primary", "trunk", "motorway"]
 

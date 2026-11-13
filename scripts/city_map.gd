@@ -10,15 +10,16 @@ extends Screen
 const ZOOMS: Array[int] = [1, 2, 4]
 const MAP_TOP := Ui.BAR_H
 const MAP_BOTTOM := Ui.CANVAS.y - Ui.FOOT_H
-const ZOOM_OUT := Rect2(500, 2, 46, 44)
-const ZOOM_IN := Rect2(550, 2, 46, 44)
-const BOX := Rect2(10, 448, 580, 122)
-const CANCEL := Rect2(26, 510, 170, 48)
-const OPEN := Rect2(330, 510, 244, 48)
-const MARKER_HIT := 20.0
-const LABEL_BIG := 14
-const LABEL_SMALL := 12
-const OK_TONE := Color("#f4f1ea")
+const ZOOM_OUT := Rect2(476, 14, 52, 52)
+const ZOOM_IN := Rect2(536, 14, 52, 52)
+const BOX := Rect2(12, 404, 576, 164)
+const CANCEL := Rect2(28, 494, 196, 56)
+const OPEN := Rect2(236, 494, 336, 56)
+const MARKER_HIT := 24.0
+const OK_TONE := Ui.CREAM
+const HOUSE: Array[String] = [".....11.....", "....1111....", "...111111...", "..11111111..",
+	".1111111111.", "111111111111", ".1111111111.", ".111111..11.", ".111111..11.",
+	".111111..11.", ".111111..11."]
 
 var city: Dictionary = {}
 
@@ -230,7 +231,7 @@ func _say(text: String) -> void:
 # --- drawing -----------------------------------------------------------------------------------
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, Ui.CANVAS), Color("#16131d"))
+	Ui.backdrop(self)
 
 
 func _draw_over() -> void:
@@ -239,73 +240,95 @@ func _draw_over() -> void:
 	for l: Dictionary in _labels_for(_zoom_i):
 		var at: Vector2 = _pan + l["at"]
 		if at.y > MAP_TOP + 4 and at.y < MAP_BOTTOM:
-			Ui.label(_over, at, l["text"], l["size"], l["color"])
+			Ui.text(_over, at, l["text"], l["size"], l["color"], l["kind"], false)
 	for o in Store.offices_in(city["id"]):
 		var s := _screen(_local(o["lat"], o["lon"]))
-		_over.draw_circle(s, r, Color(Ui.GOLD, 0.16))
-		_over.draw_arc(s, r, 0.0, TAU, 64, Ui.GOLD, 2.0)
-		_marker(s, Ui.GOLD)
+		_ring(s, r, Ui.GOLD, true)
+		_marker(s, Ui.GOLD, Ui.GOLD_M)
 		var name: String = o.get("name", "")
-		Ui.label(_over, s + Vector2(-Ui.text_width(name, Ui.SMALL) * 0.5, 26), name, Ui.SMALL,
-			Ui.GOLD)
+		Ui.text(_over, s + Vector2(-Ui.text_width(name, Ui.TEXT, Ui.NARROW) * 0.5, 34), name,
+			Ui.TEXT, Ui.GOLD, Ui.NARROW)
 	if _pending != Vector2.INF:
 		var s := _screen(_pending)
-		_over.draw_circle(s, r, Color(OK_TONE, 0.2))
-		_over.draw_arc(s, r, 0.0, TAU, 64, OK_TONE, 2.0)
-		_marker(s, OK_TONE)
+		_ring(s, r, OK_TONE, false)
+		_marker(s, OK_TONE, Ui.MUTED)
 	elif _cursor != Vector2.INF:
 		var ll := _latlon(_cursor)
 		var bad := Rules.too_close(ll.x, ll.y)
-		var tone := Ui.RED if bad else OK_TONE
-		var s := _screen(_cursor)
-		_over.draw_circle(s, r, Color(tone, 0.14))
-		_over.draw_arc(s, r, 0.0, TAU, 64, tone, 2.0)
-		_over.draw_line(s - Vector2(6, 0), s + Vector2(6, 0), tone, 2.0)
-		_over.draw_line(s - Vector2(0, 6), s + Vector2(0, 6), tone, 2.0)
+		var tone := Ui.BLOOD if bad else OK_TONE
+		var s := (_screen(_cursor) / 2.0).round() * 2.0
+		_ring(s, r, tone, false)
+		for pass_i in 2:
+			for k in range(-8, 10, 2):
+				for q: Vector2 in [s + Vector2(k, 0), s + Vector2(0, k)]:
+					if pass_i == 0:
+						_over.draw_rect(Rect2(q - Vector2(2, 2), Vector2(6, 6)), Ui.VOID)
+					else:
+						_over.draw_rect(Rect2(q, Vector2(2, 2)), tone)
 		if bad:
 			var near := Rules.nearest_office(ll.x, ll.y)
 			var o: Dictionary = near["office"]
 			# the circle the other office keeps clear, so the player sees where they may go
 			var os := _screen(_local(o["lat"], o["lon"]))
-			_over.draw_arc(os, Rules.MIN_SEPARATION / CityPaint.M_PER_PX * z, 0.0, TAU, 96,
-				Color(Ui.RED, 0.8), 1.0)
+			_ring(os, Rules.MIN_SEPARATION / CityPaint.M_PER_PX * z, Ui.BLOOD, true)
 			var msg := "Muy cerca de otra oficina (%s)" % _km(near["distance"])
-			Ui.label(_over, s + Vector2(-Ui.text_width(msg, Ui.SMALL) * 0.5, -r - 8), msg,
-				Ui.SMALL, Ui.RED.lightened(0.3))
+			Ui.text(_over, s + Vector2(-Ui.text_width(msg, Ui.TEXT, Ui.NARROW) * 0.5, -r - 10),
+				msg, Ui.TEXT, Ui.BLOOD, Ui.NARROW)
 	if _pending != Vector2.INF:
 		_draw_confirm()
 	if _note != "":
-		var w := Ui.text_width(_note, Ui.FONT_SIZE) + 24
-		var box := Rect2(300 - w * 0.5, MAP_TOP + 34, w, 30)
-		_over.draw_rect(box, Ui.SHADE)
-		Ui.text_in(_over, box, _note, Ui.FONT_SIZE, Ui.RED.lightened(0.35))
+		var w := Ui.text_width(_note, Ui.TEXT, Ui.NARROW) + 28
+		var box := Rect2(roundf(300 - w * 0.5), MAP_TOP + 10, roundf(w), 36)
+		Ui.chip(_over, box, Ui.VOID, Ui.BLOOD)
+		Ui.text_in(_over, box, _note, Ui.TEXT, Ui.BLOOD, Ui.NARROW)
 	Ui.header(_over, city["name"], true, hot)
-	Ui.button(_over, ZOOM_OUT, "-", hot, false, _zoom_i == 0)
-	Ui.button(_over, ZOOM_IN, "+", hot, false, _zoom_i == ZOOMS.size() - 1)
+	Ui.arrow(_over, ZOOM_OUT, "-", hot, _zoom_i == 0)
+	Ui.arrow(_over, ZOOM_IN, "+", hot, _zoom_i == ZOOMS.size() - 1)
 	Ui.footer(_over, "zoom x%d" % ZOOMS[_zoom_i])
 
 
 func _draw_confirm() -> void:
-	_over.draw_rect(BOX, Ui.SHADE)
-	_over.draw_rect(BOX, Ui.GOLD, false, 2.0)
+	Ui.panel(_over, BOX, Ui.GOLD)
 	var name := place_name(_pending)
-	Ui.text(_over, BOX.position + Vector2(16, 28), "¿Abrir una oficina en %s?" % name, 17,
-		Ui.INK)
-	Ui.text(_over, BOX.position + Vector2(16, 50),
-		"Se descarga una sola vez todo lo que hay a %d m a la redonda." % roundi(Rules.MAX_RADIUS),
-		Ui.SMALL, Ui.DIM)
+	Ui.text(_over, BOX.position + Vector2(20, 42), "¿Abrir una oficina en %s?" % name, Ui.TEXT,
+		Ui.CREAM, Ui.NARROW)
+	Ui.text(_over, BOX.position + Vector2(20, 72),
+		"Se descarga una vez lo que hay a %d m" % roundi(Rules.MAX_RADIUS), Ui.SMALL, Ui.MUTED,
+		Ui.TEN)
 	Ui.button(_over, CANCEL, "Cancelar", hot)
-	Ui.button(_over, OPEN, "Abrir oficina aquí", hot, true)
+	Ui.button(_over, OPEN, "Abrir oficina", hot, true)
 
 
-# a little gold house on a pin
-func _marker(s: Vector2, tone: Color) -> void:
-	var base := s.round()
-	_over.draw_rect(Rect2(base + Vector2(-7, -8), Vector2(14, 10)), tone)
-	_over.draw_colored_polygon(PackedVector2Array([base + Vector2(-10, -8), base + Vector2(0, -17),
-		base + Vector2(10, -8)]), tone)
-	_over.draw_rect(Rect2(base + Vector2(-2, -4), Vector2(4, 6)), Ui.BAR)
-	_over.draw_rect(Rect2(base + Vector2(-7, -8), Vector2(14, 10)), Ui.BAR, false, 1.0)
+# a pixel circle on the 2x grid; dashed for offices, solid for the cursor
+func _ring(at: Vector2, r: float, tone: Color, dashed: bool) -> void:
+	var steps := maxi(24, ceili(TAU * r / 2.0))
+	var seen := {}
+	for k in steps:
+		if dashed and (k / 4) % 3 == 2:
+			continue
+		var a := TAU * k / steps
+		var q := ((at + Vector2(cos(a), sin(a)) * r) / 2.0).round() * 2.0
+		if seen.has(q):
+			continue
+		seen[q] = true
+		_over.draw_rect(Rect2(q - Vector2(1, 1), Vector2(4, 4)), Ui.VOID)
+	for q: Vector2 in seen:
+		_over.draw_rect(Rect2(q, Vector2(2, 2)), tone)
+
+
+# the mockup's little house icon on the spot, outlined in ink
+func _marker(s: Vector2, tone: Color, dark: Color) -> void:
+	var at := ((s - Vector2(12, 24)) / 2.0).round() * 2.0
+	for j in HOUSE.size():
+		for i in HOUSE[j].length():
+			if HOUSE[j][i] == "1":
+				_over.draw_rect(Rect2(at + Vector2(i, j) * 2.0 - Vector2(2, 2), Vector2(6, 6)),
+					Ui.VOID)
+	for j in HOUSE.size():
+		for i in HOUSE[j].length():
+			if HOUSE[j][i] == "1":
+				_over.draw_rect(Rect2(at + Vector2(i, j) * 2.0, Vector2(2, 2)),
+					dark if j >= 6 and i >= 6 else tone)
 
 
 # neighbourhood names placed greedily by importance so none overlap; worked out once per zoom,
@@ -320,11 +343,13 @@ func _labels_for(i: int) -> Array:
 		var rank: int = p["rank"]
 		if i == 0 and rank > 2:
 			continue
-		var size := LABEL_BIG if rank <= 1 else LABEL_SMALL
+		var big := rank <= 1
+		var size := Ui.TEXT if big else Ui.SMALL
+		var kind := Ui.NARROW if big else Ui.TEN
 		var text: String = p["name"]
-		var w := Ui.text_width(text, size)
+		var w := Ui.text_width(text, size, kind)
 		var at := _paint.to_px(Vector2(p["x"], p["y"])) * z
-		var box := Rect2(at.x - w * 0.5 - 4, at.y - size - 2, w + 8, size + 8)
+		var box := Rect2(at.x - w * 0.5 - 6, at.y - size - 4, w + 12, size + 12)
 		var free := true
 		for q in placed:
 			if q.intersects(box):
@@ -333,7 +358,7 @@ func _labels_for(i: int) -> Array:
 		if free:
 			placed.append(box)
 			out.append({"at": Vector2(at.x - w * 0.5, at.y).round(), "text": text, "size": size,
-				"color": Color.WHITE if rank <= 1 else Color("#ece6d2")})
+				"kind": kind, "color": Ui.CREAM if big else Ui.MUTED.lightened(0.3)})
 	_labels[i] = out
 	return out
 
