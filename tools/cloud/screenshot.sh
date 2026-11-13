@@ -26,7 +26,7 @@ echo "capturing into $OUT (log: $LOG)"
 LIBGL_ALWAYS_SOFTWARE=1 timeout "$TIMEOUT" \
 	xvfb-run -a -s "-screen 0 1280x1024x24" \
 	"$GODOT" --path "$ROOT" --rendering-driver opengl3 --audio-driver Dummy \
-	--script res://tools/cloud/capture.gd -- --out="$OUT" 2>&1 | tee "$LOG"
+	--script res://tools/cloud/capture.gd -- --out="$OUT" "${@:2}" 2>&1 | tee "$LOG"
 status=${PIPESTATUS[0]}
 
 fail=0
