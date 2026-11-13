@@ -1,0 +1,7 @@
+# Keep LF everywhere. Git for Windows defaults to autocrlf=true, which makes every `git add`
+# print a conversion warning per file and floods the terminal on a project this size.
+* text=auto eol=lf
+
+*.png binary
+*.ttf binary
+*.exe binary

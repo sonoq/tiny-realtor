@@ -1,0 +1,5 @@
+.godot/
+.claude/settings.local.json
+.claude/worktrees/
+build/
+*.tmp
