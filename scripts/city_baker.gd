@@ -33,7 +33,7 @@ static func query(lat: float, lon: float) -> String:
 		'way["waterway"="river"]' + b,
 		'way["leisure"="park"]' + b,
 	]
-	return "[out:json][timeout:120][maxsize:268435456];(" + ";".join(parts) + ";);out geom qt;"
+	return Overpass.compose("[out:json][timeout:120][maxsize:268435456];", parts)
 
 
 static func bake(raw: Dictionary, lat0: float, lon0: float) -> Dictionary:
@@ -124,12 +124,12 @@ static func pick_name(tags: Dictionary) -> String:
 	for key in ["name", "name:es", "name:en", "name:latin", "name:ja-Latn", "name:ja_rm",
 			"int_name"]:
 		var s: String = tags.get(key, "")
-		if s != "" and _latin(s):
+		if s != "" and is_latin(s):
 			return s
 	return ""
 
 
-static func _latin(s: String) -> bool:
+static func is_latin(s: String) -> bool:
 	for i in s.length():
 		if s.unicode_at(i) > 0x24F and s.unicode_at(i) != 0x2019:
 			return false

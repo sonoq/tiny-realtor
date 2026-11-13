@@ -30,6 +30,7 @@ func click(at: Vector2) -> void:
 	if Ui.BACK_RECT.has_point(at) or (error != "" and LEAVE.has_point(at)):
 		back()
 	elif error != "" and RETRY.has_point(at):
+		_t = 0.0
 		app.retry_job()
 
 
@@ -54,6 +55,8 @@ func _draw() -> void:
 		Ui.text_in(self, Rect2(BOX.position.x + 10, BOX.position.y + 186, BOX.size.x - 20, 24),
 			status, Ui.FONT_SIZE, Ui.INK)
 		var got := "Recibido: %s" % Ui.size_text(bytes) if bytes > 0 else "Esperando al servidor…"
+		# the public servers can take minutes; a ticking clock shows nothing is stuck
+		got += "  ·  %d s" % int(_t)
 		Ui.text_in(self, Rect2(BOX.position.x, BOX.position.y + 214, BOX.size.x, 24), got,
 			Ui.SMALL, Ui.DIM)
 		Ui.text_in(self, Rect2(BOX.position.x, BOX.position.y + 240, BOX.size.x, 24),

@@ -44,6 +44,26 @@ var _wait := 0.0
 var _busy := false
 
 
+# One query from its statements: ways come back with their geometry but without their node id
+# lists (`out tags geom`, a quarter smaller); relations and nodes need the full body (members,
+# coordinates). `head` is the settings block, e.g. "[out:json][timeout:90]".
+static func compose(head: String, statements: Array[String]) -> String:
+	var ways: Array[String] = []
+	var rest: Array[String] = []
+	for st in statements:
+		if st.begins_with("way"):
+			ways.append(st)
+		else:
+			rest.append(st)
+	var q := head + "(" + ";".join(ways) + ";)->.w;"
+	if not rest.is_empty():
+		q += "(" + ";".join(rest) + ";)->.r;"
+	q += ".w out tags geom qt;"
+	if not rest.is_empty():
+		q += ".r out geom qt;"
+	return q
+
+
 # reads the debug switches once; main.gd calls this at start
 static func read_flags() -> void:
 	fixture_mode = OS.get_environment("TINY_REALTOR_FIXTURE") == "1"

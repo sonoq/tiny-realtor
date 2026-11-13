@@ -67,7 +67,7 @@ static func query(lat: float, lon: float, radius: float) -> String:
 		'relation["natural"="water"]' + a,
 		'way["waterway"="riverbank"]' + a,
 	]
-	return "[out:json][timeout:90][maxsize:268435456];(" + ";".join(parts) + ";);out geom qt;"
+	return Overpass.compose("[out:json][timeout:90][maxsize:268435456];", parts)
 
 
 # raw: the parsed Overpass JSON; (lat0, lon0): the office; radius: the max radius in metres
@@ -320,8 +320,11 @@ static func _add_road(roads: Array[Dictionary], graph: StreetGraph, tags: Dictio
 			width = w
 	if raw_kind.ends_with("_link"):
 		width = minf(width, 10.0)
-	var name: String = tags.get("name", "")
+	# a name the Latin font can draw (Tokyo's local names are Japanese), else none
+	var name := CityBaker.pick_name(tags)
 	var ref: String = tags.get("ref", "")
+	if not CityBaker.is_latin(ref):
+		ref = ""
 	for piece in _cut_line(line, disc, radius):
 		roads.append({"name": name, "ref": ref, "kind": kind, "width": width, "line": piece,
 			"major": kind in MAJOR})
@@ -569,7 +572,9 @@ static func _tidy(poly: PackedVector2Array) -> PackedVector2Array:
 	for _try in 3:
 		var snapped := PackedVector2Array()
 		for p in out:
-			snapped.append(p.snappedf(0.1))
+			# rounded in double precision exactly as the file will hold it, then stored back in
+			# float32 as a load would: one ulp is enough to turn a sliver inside out
+			snapped.append(Vector2(snappedf(p.x, 0.1), snappedf(p.y, 0.1)))
 		snapped = Geo.weld(snapped)
 		if snapped.size() >= 3 and not Geometry2D.triangulate_polygon(snapped).is_empty():
 			return snapped if absf(Geo.area(snapped)) >= 1.0 else PackedVector2Array()

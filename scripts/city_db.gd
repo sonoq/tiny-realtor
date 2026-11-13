@@ -39,7 +39,7 @@ const _RAW: Array[Dictionary] = [
 	{"id": "lima", "name": "Lima", "country": "Perú", "lat": -12.1050, "lon": -77.0300},
 	{"id": "saopaulo", "name": "São Paulo", "country": "Brasil", "lat": -23.5600,
 		"lon": -46.6550},
-	{"id": "tokyo", "name": "Tokio", "country": "Japón", "lat": 35.6760, "lon": 139.7300},
+	{"id": "tokyo", "name": "Tokio", "country": "Japón", "lat": 35.6680, "lon": 139.7150},
 	{"id": "seoul", "name": "Seúl", "country": "Corea del Sur", "lat": 37.5450, "lon": 126.9900},
 	{"id": "singapore", "name": "Singapur", "country": "Singapur", "lat": 1.2950,
 		"lon": 103.8500},
