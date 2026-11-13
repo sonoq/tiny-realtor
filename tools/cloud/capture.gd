@@ -3,7 +3,7 @@ extends SceneTree
 # Boots the real game (res://main.tscn) and drives the whole map flow like a player, saving a PNG
 # at each step: the city list, Barcelona's map, the office cursor, the confirm box, the download,
 # the office view; a second office in Tokyo and a third in Warsaw; and the red "too close"
-# cursor. It needs a real display (run it under xvfb-run, see tools/cloud/screenshot.sh), because
+# cursor; then the busy-server screen. It needs a real display (run it under xvfb-run, see tools/cloud/screenshot.sh), because
 # a headless run renders nothing a viewport could hand back.
 #
 #   godot --path . --rendering-driver opengl3 --audio-driver Dummy \
@@ -85,10 +85,16 @@ func _init() -> void:
 		if not await _wait_for("OfficeView"):
 			return
 		var view := _app.screen as OfficeView
-		await _frames(4)
+		if not await _wait_drawn(view):
+			return
+		await _frames(2)
 		await _shot("%02d_office_%s" % [n, spot["tag"]])
 		n += 1
 		if spot["tag"] == "barcelona":
+			view.set_zoom_step(2)
+			await _frames(2)
+			await _shot("%02d_office_%s_close" % [n, spot["tag"]])
+			n += 1
 			view.set_zoom_step(0)
 			await _frames(2)
 			await _shot("%02d_office_%s_far" % [n, spot["tag"]])
@@ -102,6 +108,13 @@ func _init() -> void:
 			map.hover_latlon(spot["lat"] + 0.0045, spot["lon"] + 0.0045)
 			await _shot("%02d_too_close" % n)
 			n += 1
+	# what the player sees when every map server is busy
+	var busy := Loading.new()
+	busy.title = "Nueva oficina en Eixample"
+	busy.error = Overpass.BUSY
+	_app._show(busy)
+	await _frames(3)
+	await _shot("%02d_server_busy" % n)
 	print("DONE %d shots -> %s" % [_shots, ProjectSettings.globalize_path(_out)])
 	for o in Store.offices():
 		print("STATS %s %s" % [o["id"], JSON.stringify(o.get("stats", {}))])
@@ -122,6 +135,17 @@ func _wait_for(cls: String) -> bool:
 			return false
 	_fail("timed out waiting for " + cls)
 	return false
+
+
+# the office view draws its area a frame or two after it opens
+func _wait_drawn(view: OfficeView) -> bool:
+	var t0 := Time.get_ticks_msec()
+	while not view.is_drawn():
+		await process_frame
+		if Time.get_ticks_msec() - t0 > 60000:
+			_fail("the office view never finished drawing")
+			return false
+	return true
 
 
 func _frames(n: int) -> void:

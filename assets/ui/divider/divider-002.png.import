@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bj6nl6t7rw3fm"
-path="res://.godot/imported/12_office_warszawa.png-8860519593550029a5c480b757419396.ctex"
+uid="uid://bp5ihwe4fp8j4"
+path="res://.godot/imported/divider-002.png-a5c7006f3b3c2c3db47b6c10155340cf.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://docs/screenshots/12_office_warszawa.png"
-dest_files=["res://.godot/imported/12_office_warszawa.png-8860519593550029a5c480b757419396.ctex"]
+source_file="res://assets/ui/divider/divider-002.png"
+dest_files=["res://.godot/imported/divider-002.png-a5c7006f3b3c2c3db47b6c10155340cf.ctex"]
 
 [params]
 

@@ -28,6 +28,12 @@ Abres oficinas inmobiliarias en barrios reales del mundo, compras solares en las
 - La zona alrededor de la oficina en isométrico pixel art: calles, edificios, parques.
 - Aquí se compra, se construye y se mejora.
 
+### Estilo visual (decidido: A, "hermano de Tiny Battlegrounds")
+- El de la maqueta `docs/style_mockups/a_battlegrounds/`: fondo de pizarra oscura, paneles con remaches, letra pixel gruesa con borde oscuro, acentos cian, oro y menta, como Tiny Battlegrounds.
+- El barrio es una maqueta flotante: dentro del radio de la oficina todo va a todo color; fuera, la ciudad es gris lila, como miniaturas sin pintar que vas conquistando, con un anillo dorado discontinuo en el borde.
+- Lo tuyo lleva tejado turquesa y bandera cian; los solares en venta, cartel rojo con "$" y etiqueta de precio; el rascacielos, corona dorada; tu oficina, el cartel REALTOR.
+- Todo es pixel art de verdad: una sola paleta, sin mezclas de color, cada píxel del dibujo se ve como un bloque de 2x2.
+
 ## 3. Cómo se consiguen los mapas
 
 - Fuente: **OpenStreetMap**, pedido directamente a la **API pública de Overpass**. Sin servidor propio: **0 € al mes**.

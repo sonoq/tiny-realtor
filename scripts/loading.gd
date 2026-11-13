@@ -5,9 +5,12 @@ extends Screen
 # happening in plain words, how much has arrived, a spinner, and a way out. When every server
 # failed it says so and offers to try again.
 
-const RETRY := Rect2(150, 380, 140, 48)
-const LEAVE := Rect2(310, 380, 140, 48)
-const BOX := Rect2(60, 170, 480, 280)
+const BOX := Rect2(36, 150, 528, 330)
+const RETRY := Rect2(64, 398, 230, 56)
+const LEAVE := Rect2(306, 398, 230, 56)
+# the spinner: eight blocks chasing round, like a tiny city going up
+const BLOCK := 12.0
+const RING_R := 34.0
 
 var title := ""
 var status := ""
@@ -40,35 +43,40 @@ func back() -> bool:
 
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, Ui.CANVAS), Color("#16131d"))
-	Ui.panel(self, BOX)
-	Ui.text_in(self, Rect2(BOX.position.x, BOX.position.y + 18, BOX.size.x, 30), title, 18, Ui.GOLD)
+	Ui.backdrop(self)
+	Ui.panel(self, BOX, Ui.RED if error != "" else Ui.RIM_DIM)
+	Ui.text_in(self, Rect2(BOX.position.x, BOX.position.y + 22, BOX.size.x, 30), title, Ui.TEXT,
+		Ui.GOLD)
 	if error == "":
-		# eight blocks chasing round, like a tiny city being built
-		var c := BOX.get_center() + Vector2(0, -10)
+		var c := (BOX.get_center() + Vector2(0, -24)).round()
 		for i in 8:
 			var a := TAU * i / 8.0
 			var lit := fposmod(_t * 8.0 - i, 8.0)
-			var tone := Ui.GOLD.lerp(Ui.EDGE, clampf(lit / 6.0, 0.0, 1.0))
-			draw_rect(Rect2(c + Vector2(cos(a), sin(a)) * 26.0 - Vector2(5, 5), Vector2(10, 10)),
-				tone)
-		Ui.text_in(self, Rect2(BOX.position.x + 10, BOX.position.y + 186, BOX.size.x - 20, 24),
-			status, Ui.FONT_SIZE, Ui.INK)
+			var tone := Ui.GOLD
+			if lit > 1.0:
+				tone = Ui.GOLD_M if lit < 3.0 else Ui.STEEL
+			var at := (c + Vector2(cos(a), sin(a)) * RING_R - Vector2.ONE * BLOCK * 0.5)
+			at = (at / 2.0).round() * 2.0
+			draw_rect(Rect2(at - Vector2(2, 2), Vector2.ONE * (BLOCK + 4)), Ui.VOID)
+			draw_rect(Rect2(at, Vector2.ONE * BLOCK), tone)
+		Ui.text_in(self, Rect2(BOX.position.x + 10, BOX.position.y + 214, BOX.size.x - 20, 26),
+			status, Ui.TEXT, Ui.CREAM, Ui.NARROW)
 		var got := "Recibido: %s" % Ui.size_text(bytes) if bytes > 0 else "Esperando al servidor…"
 		# the public servers can take minutes; a ticking clock shows nothing is stuck
 		got += "  ·  %d s" % int(_t)
-		Ui.text_in(self, Rect2(BOX.position.x, BOX.position.y + 214, BOX.size.x, 24), got,
-			Ui.SMALL, Ui.DIM)
-		Ui.text_in(self, Rect2(BOX.position.x, BOX.position.y + 240, BOX.size.x, 24),
-			"Solo se descarga una vez y se guarda para siempre.", Ui.SMALL, Ui.DIM)
+		Ui.text_in(self, Rect2(BOX.position.x, BOX.position.y + 250, BOX.size.x, 24), got,
+			Ui.SMALL, Ui.MUTED, Ui.TEN)
+		Ui.text_in(self, Rect2(BOX.position.x, BOX.position.y + 280, BOX.size.x, 24),
+			"Solo se descarga una vez", Ui.SMALL, Ui.MUTED, Ui.TEN)
 	else:
-		var y := BOX.position.y + 80
-		for line in _wrap(error, 44):
-			Ui.text_in(self, Rect2(BOX.position.x, y, BOX.size.x, 24), line, Ui.FONT_SIZE, Ui.INK)
-			y += 24
+		var y := BOX.position.y + 76
+		for line in _wrap(Ui.caps(error), 34):
+			Ui.text_in(self, Rect2(BOX.position.x, y, BOX.size.x, 26), line, Ui.TEXT, Ui.CREAM,
+				Ui.NARROW)
+			y += 32
 		Ui.button(self, RETRY, "Reintentar", hot, true)
 		Ui.button(self, LEAVE, "Volver", hot)
-	Ui.header(self, "Descargando mapa", true, hot)
+	Ui.header(self, "Descargando", true, hot)
 	Ui.footer(self, "")
 
 

@@ -13,6 +13,9 @@ made by the game, drawn as procedural isometric pixel art made with maths.
 - **Current state: map prototype.** Pick a city, see its real map, place offices, download and
   bake each office's area once from OpenStreetMap, view it in isometric pixel art. No gameplay
   yet (no money, buying or building).
+- **Visual style: A, "sibling of Tiny Battlegrounds" (decided by Oscar).** The spec is the
+  mockup in `docs/style_mockups/a_battlegrounds/` (`gen_battlegrounds.py` + its PNGs); the other
+  three mockups there were the rejected options. See "Style A" below.
 
 ## Design (decided so far)
 
@@ -54,19 +57,28 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   click; Esc = back, quits from the city list) and the download jobs: `Overpass` fetch -> parse
   and bake on a `Thread` -> save with `Store` -> open the next screen. Prints a `CITY ...` /
   `OFFICE ...` line with sizes and timings after each job.
-- `screen.gd` (`Screen`) - base for full-window screens. `ui.gd` (`Ui`) - shared drawing: header
-  with the back button (`BACK_RECT`), buttons, outlined labels, the footer with the OSM credit
-  (on every screen) and the red DATOS DE PRUEBA tag in fixture mode. Hit targets >= `MIN_HIT`.
+- `screen.gd` (`Screen`) - base for full-window screens. `ui.gd` (`Ui`) - shared drawing, a mirror
+  of Battlegrounds' `UiKit`: slate checker `backdrop`, Kenney nine-slice `plate`s (panel 12
+  studded, 13 slot, 15 button; a flat `chip` under 48 px), `button` (steel, cyan rim when hot,
+  gold `accent`), cyan `arrow` buttons (< > + - as pixel glyphs), the top-left `back_button` and
+  `header` (title beside it; `BAR_H` is also the window-drag zone), `text` (TinyFont capitals
+  with an ink rim and drop shadow; `caps()` swaps letters the fonts lack for their base letter),
+  `micro` (the mockup's 3x5 font), `bar`, `coin`, and the `footer` with the OSM credit (on every
+  screen) and the red DATOS DE PRUEBA tag in fixture mode. Hit targets >= `MIN_HIT`.
 - `city_pick.gd` (`CityPick`) - the shipped city list, 12 a page with < > arrows.
 - `city_map.gd` (`CityMap`) + `city_paint.gd` (`CityPaint`) - the city map, north up, painted once
-  into a SubViewport at 12 m/px and shown at x1/x2/x4; labels, office markers and the cursor are
-  drawn live on top. The cursor carries the `Rules.MAX_RADIUS` circle, red when closer than
-  `Rules.MIN_SEPARATION` to any office; click = pending spot + confirm box. Clicking an office
-  marker opens it. `center_on`/`hover_latlon`/`pick_latlon`/`confirm` drive it from tools.
+  into a SubViewport at 12 m/px and shown at x1/x2/x4, in a slate night palette (land SL1, sea
+  CYAN_DD, parks GRASS_DD, roads slate -> gold by class); labels, office markers (gold house +
+  dashed pixel ring) and the cursor are drawn live on top. The cursor carries the
+  `Rules.MAX_RADIUS` circle, red when closer than `Rules.MIN_SEPARATION` to any office; click =
+  pending spot + confirm box. Clicking an office marker opens it.
+  `center_on`/`hover_latlon`/`pick_latlon`/`confirm` drive it from tools.
 - `loading.gd` (`Loading`) - status, bytes received, spinner; on failure a message with
   Reintentar / Volver.
-- `office_view.gd` (`OfficeView`) - one saved office: `BlockView` drawn once into a SubViewport
-  the size of the whole disc, shown at x1/x2; street names drawn on top along the streets.
+- `office_view.gd` (`OfficeView`) - one saved office: shows `BlockView.texture` (drawn once, a
+  frame or two after opening; `is_drawn()`) at x1/x2/x3 (x2 = the mockup), with the mockup's HUD:
+  back + neighbourhood, plots owned, level bar with the active/max radius, "+$" pops over owned
+  roofs, street names sheared along their streets in the pixel font.
 
 **Data and rules**
 - `city_db.gd` (`CityDb`) - the shipped cities (id, Spanish name, country, map-box centre).
@@ -95,7 +107,7 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
 - `city_baker.gd` (`CityBaker`) - city query (8 km box: motorway..secondary, coastline, water,
   rivers, parks, place=borough/suburb/quarter/neighbourhood nodes) and its bake (format
   `tiny-realtor-city` v1: roads, sea, land, water, rivers, parks, places; names picked so the
-  Latin font can draw them: `name`, else `name:es`/`name:en`/romanised).
+  Latin font can draw them: `name`, else `name:en`/`name:ja-Latn`/romanised, else `name:es`).
 - `block_baker.gd` (`BlockBaker`) - the office query and bake (see the format below). **No
   buildings are downloaded**: the streets (with names/refs), railways, land-use zones, parks and
   water within `MAX_RADIUS`. Steps: project, turn so the dominant street direction (length-
@@ -109,15 +121,59 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   frontage ranges by zone), each side owning the wedge between its corner bisectors, cut across
   every frontage width; convex corners merge into one corner plot; the middle is the courtyard.
   Sides lying on the disc edge face no street and get no plots.
-- `block_view.gd` (`BlockView`) - draws a v2 area once: earth disc, water, parks, roads (curbs
-  then asphalt, lane dashes away from junctions), railways, blocks, courtyards, plots (bare lots
-  by zone, some with a for-sale sign), shadows, the dark veil + gold ring outside
-  `active_radius`, then built plots as procedural buildings far-to-near (hazed outside the active
-  radius) and the office (white walls, gold roof, flag and pin; a kiosk when no plot is near).
-  `street_labels()` gives label spots for the overlay. Projection: `u = x, v = -y`, screen
-  `((u - v) * SCALE, (u + v) * SCALE / 2 - z * RISE)`.
+- `block_view.gd` (`BlockView`) - draws a v2 area once, style A, into `texture` (signal
+  `drawn`): `set_block` builds the ops (AreaBuilder) and sorts them (DepthSort); `_ready` runs
+  three GPU passes in throwaway SubViewports, each read back once: the ground as palette indices
+  + the shadow mask, then the world (ground through WorldShader's ground shader, the slab, the
+  ring, every object in painter's order with its ink outline, price tags). `street_labels()`
+  gives label spots for the overlay; `pops` the roofs income pops rise from.
+- `area_builder.gd` (`AreaBuilder`) - a v2 area -> ops: the ground (pavement, asphalt, pedestrian
+  paving, rails, parks, water, courtyard gardens, lots with fence posts and tufts, gardens with
+  hedges and pools, lane dashes, zebra crossings at junctions), shadows, the earth slab, the
+  dashed gold ring, and the objects: buildings by tier with the mockup's recipes (0 lot + "$"
+  sign, 1 house, 2 estate with pool, 3 apartments, 4 tower, 5 skyscraper with gold crown;
+  industrial = shed), the office (REALTOR sign, teal roof, cyan flag), owned = teal roof + cyan
+  flag, trees (courtyards, parks, street trees), lamps and people inside the active radius,
+  cars in the lanes, price tags on the nearest signed lots. All placement by stable hashes.
+- `painter.gd` (`Painter`) - records one object's ops (POLY, WALL, RECT, TEX) with the mockup's
+  primitives: `wall` (wall_pixels), `prism`, `face3d`, `pitched`, Bresenham `line`.
+- `world_shader.gd` (`WorldShader`) - the two shaders, generated with the palette's names: the
+  facade shader (walls per pixel: apartment, office, house, tower, sky, plain, skeleton,
+  scaffold, slab, cab, shed, ink; sprites from the atlas) and the ground shader.
+- `depth_sort.gd` (`DepthSort`) - painter's order: separating axis between footprint hulls for
+  every pair whose screen boxes overlap, then a topological sort (fixes long thin plots).
+- `pal.gd` (`Pal`), `iso.gd` (`Iso`), `sprites.gd` (`Sprites`) - see "Style A".
 - `docs/prototype/` - the Python prototype (Pillow + Shapely); its `block_raw_overpass.json` is
   the hand-made Eixample sample the fixture uses. Not shipped.
+
+## Style A (the look, and the rules that keep it)
+
+The office view is the mockup's renderer ported to the GPU, pixel for pixel in spirit:
+- **One palette** (`Pal`, 74 colours from `gen_battlegrounds.py`: Battlegrounds' slate/ink/gold/
+  cyan/mint/red plus the city ramps CRM OCH SAL STN TER TIL TEAL GLS CON). Every pixel of the
+  drawing is a palette colour: nothing blends (`render_mode blend_disabled`), shadows, the dim
+  outside the active radius and the faded "unpainted miniature" buildings are remap tables over
+  the palette (`Pal.shadow/dim/fade`, rows of `Pal.lut()`). `render_office.gd` fails on any
+  off-palette pixel. Sprites go through an index atlas read with `texelFetch`, never a canvas
+  item's own TEXTURE (compat converts it from sRGB and the colours drift).
+- **Camera** (`Iso`): `S` = 1.19 low-res px per metre, `u = x, v = -y`, screen
+  `((u - v) S, (u + v) S / 2 - z)` with z already in pixels (a storey is 3-5 px by tier); light
+  from the upper left (`Iso.LIGHT`, `Iso.shade`). The drawing is low-res; the view shows it at x2
+  (one art pixel = 2x2 screen pixels) with nearest filtering. Only integer zooms.
+- **Outlines**: every object (not lamps/people) gets a 1 px INK outline: its ops replayed shifted
+  left/right/up/down in ink before the colour pass.
+- **Walls** are quads whose vertex colour and UV carry the facade parameters (style, light k,
+  ramp, variant, height, width, seed; see the comment in `world_shader.gd`); the shader finds
+  each pixel's column and row above the base exactly like `wall_pixels` and picks the colour.
+- **Determinism**: placement and details hash with `Iso.h01` (String.hash, mixed), never `randf`.
+- **UI**: TinyFont 12 bold / narrow bold / 10 bold (`fonts/`, see `TinyFont-README.md`; imported
+  with antialiasing, hinting and subpixel positioning off) only at whole multiples of the design
+  size (24, 36; 20 for the 10 px font); the mockup's micro font for the credit and tags; Kenney
+  CC0 nine-slices (`assets/ui/`, `LICENSE_kenney.txt`) at 1:1 with 16 px slices, as UiKit.
+  Colours: VOID/SL0 backdrop checker (76 px), CREAM text, MUTED secondary, GOLD money/level/
+  accent buttons, CYAN arrows and hover, BLOOD/RED warnings, MINT reserved for income.
+- Placeholders until there is an economy: price tags = area x `AreaBuilder.PRICE_M2`, "+$" pops
+  without amounts, only the office plot is owned (data's `owned` is honoured).
 
 ## Office area format (`tiny-realestate-block` v2)
 
@@ -161,13 +217,17 @@ godot --headless --path . --script res://tools/net_check.gd     # one small real
 `screenshot.sh [outdir] [args]` runs `tools/cloud/capture.gd` under
 `xvfb-run -a -s "-screen 0 1280x1024x24" godot --path . --rendering-driver opengl3 --audio-driver Dummy`
 (mesa llvmpipe), because `--headless` renders nothing. The capture drives the real flow: city
-list, Barcelona map, cursor, confirm, loading, office (near and far), the red too-close cursor,
-then offices in Tokyo and Warsaw. Extra args: `--fixture`, `--fresh` (also re-download city maps;
+list, Barcelona map, cursor, confirm, loading, office (x2, x3 close-up, x1 far), the red
+too-close cursor, offices in Tokyo and Warsaw, then the busy-server screen. Extra args: `--fixture`, `--fresh` (also re-download city maps;
 offices are always wiped first), `--spot=city:lat:lon` (repeatable, replaces the places),
 `--raw-cache=DIR`. Under Xvfb a `WARNING: Could not set V-Sync mode` line is normal.
 
 Other tools: `bake_check.gd -- --raw=/abs/answer.json --lat= --lon= [--city]` bakes a saved raw
-Overpass answer; `seed_cache.gd` files a raw answer under the name `--raw-cache` looks for.
+Overpass answer; `seed_cache.gd` files a raw answer under the name `--raw-cache` looks for;
+`tools/cloud/render_office.gd -- --out=/abs/dir [--file=/abs/office.json]` (under xvfb-run like
+the capture) renders saved offices alone (whole drawing + x2 crop) in seconds and fails on any
+pixel off the palette. `docs/screenshots/style_a_side_by_side.png` is the mockup next to the
+real Barcelona office.
 
 **Network in the cloud container**: Overpass hosts must be on the environment's allowlist. In
 this container overpass-api.de reset every TLS handshake, overpass.kumi.systems timed out and
