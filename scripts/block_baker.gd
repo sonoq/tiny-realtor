@@ -256,7 +256,8 @@ static func bake(raw: Dictionary, lat0: float, lon0: float, radius: float) -> Di
 
 
 # Overpass geometry as metre polylines; a null (a node outside a clipped output) splits a run
-static func _runs(geometry: Array, lat0: float, lon0: float, k: Vector2) -> Array[PackedVector2Array]:
+static func _runs(geometry: Array, lat0: float, lon0: float,
+		k: Vector2) -> Array[PackedVector2Array]:
 	var out: Array[PackedVector2Array] = []
 	var cur := PackedVector2Array()
 	for g: Variant in geometry:

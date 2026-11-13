@@ -35,10 +35,6 @@ func _ready() -> void:
 	show_cities()
 
 
-func screen_name() -> String:
-	return "" if screen == null else String(screen.get_script().get_global_name())
-
-
 # --- navigation --------------------------------------------------------------------------------
 
 func _show(next: Screen) -> void:
@@ -59,7 +55,9 @@ func open_city(city_id: String) -> void:
 	if city.is_empty():
 		return
 	var data: Variant = Store.read_json(Store.city_path(city_id))
-	if data is Dictionary and data.get("format") == CityBaker.FORMAT:
+	# a city map made of test data is never shown as the real one, nor the other way round
+	if data is Dictionary and data.get("format") == CityBaker.FORMAT \
+			and (data.get("data_source") == "fixture") == Overpass.fixture_mode:
 		var map := CityMap.new()
 		map.setup(city, data)
 		_show(map)

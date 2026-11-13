@@ -52,7 +52,10 @@ static func offices() -> Array[Dictionary]:
 		if data is Dictionary:
 			for o: Variant in data.get("offices", []):
 				# an index entry whose area file is gone is dropped, so it can be placed again
-				if o is Dictionary and FileAccess.file_exists(office_path(o.get("id", ""))):
+				if not o is Dictionary or not FileAccess.file_exists(office_path(o.get("id", ""))):
+					continue
+				# offices made of test data live apart from real ones, never on the same map
+				if (o.get("source") == "fixture") == Overpass.fixture_mode:
 					_offices.append(o)
 	return _offices
 
@@ -67,7 +70,13 @@ static func offices_in(city_id: String) -> Array[Dictionary]:
 
 static func add_office(meta: Dictionary) -> void:
 	offices().append(meta)
-	write_json(INDEX, {"offices": _offices})
+	# the file keeps every office, the test-data ones too, whatever this run shows
+	var all: Array = []
+	var data: Variant = read_json(INDEX)
+	if data is Dictionary:
+		all = data.get("offices", [])
+	all.append(meta)
+	write_json(INDEX, {"offices": all})
 
 
 # forget the in-memory index, for tools that change user:// behind the game's back

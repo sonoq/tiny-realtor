@@ -7,14 +7,17 @@ extends SceneTree
 # a headless run renders nothing a viewport could hand back.
 #
 #   godot --path . --rendering-driver opengl3 --audio-driver Dummy \
-#       --script res://tools/cloud/capture.gd -- --out=/abs/dir [--fixture] [--fresh]
+#       --script res://tools/cloud/capture.gd -- --out=/abs/dir [--fixture] [--fresh] \
+#       [--spot=city:lat:lon ...] [--raw-cache=/abs/dir]
+# --spot (repeatable) replaces the default places; a Barcelona spot also gets the cursor, confirm,
+# loading, zoomed-out and too-close shots.
 #
 # Offices from earlier runs are always wiped first (they would make the new ones "too close");
 # --fresh also wipes the cached city maps, so every download is measured from scratch.
 
 const DEFAULT_OUT := "user://screenshots"
 # seconds to wait for a download + bake before giving up
-const PATIENCE := 420.0
+const PATIENCE := 1500.0
 const SPOTS := [
 	{"city": "barcelona", "lat": 41.3925, "lon": 2.1640, "tag": "barcelona"},
 	{"city": "tokyo", "lat": 35.6595, "lon": 139.7005, "tag": "tokyo"},
@@ -24,6 +27,7 @@ const SPOTS := [
 var _out: String = DEFAULT_OUT
 var _app: App
 var _shots: int = 0
+var _spots: Array = SPOTS.duplicate()
 
 
 func _init() -> void:
@@ -33,6 +37,11 @@ func _init() -> void:
 			_out = arg.substr(6)
 		elif arg == "--fresh":
 			fresh = true
+		elif arg.begins_with("--spot="):
+			var p := arg.substr(7).split(":")
+			if _spots == SPOTS:
+				_spots = []
+			_spots.append({"city": p[0], "lat": float(p[1]), "lon": float(p[2]), "tag": p[0]})
 	DirAccess.make_dir_recursive_absolute(_out)
 	_wipe(Store.OFFICES)
 	if fresh:
@@ -44,7 +53,7 @@ func _init() -> void:
 	await _shot("01_cities")
 
 	var n := 2
-	for spot: Dictionary in SPOTS:
+	for spot: Dictionary in _spots:
 		_app.open_city(spot["city"])
 		if not await _wait_for("CityMap"):
 			return

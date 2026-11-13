@@ -6,15 +6,15 @@ extends Node2D
 # Pixel (0, 0) is the north-west corner of the city box.
 
 const M_PER_PX := 12.0
-const LAND := Color("#d6cdb0")
-const LAND_DOT := Color("#cdc3a5")
+const LAND := Color("#cbc09f")
+const LAND_DOT := Color("#c2b694")
 const SEA := Color("#4f7fae")
 const SEA_DOT := Color("#5a8ab8")
 const WATER := Color("#5b8dbb")
 const PARK := Color("#94b86e")
 const ROAD := {
 	"motorway": [Color("#d9644a"), 3.0], "trunk": [Color("#e58a4a"), 2.0],
-	"primary": [Color("#f4c95d"), 2.0], "secondary": [Color("#fbf3dc"), 1.0],
+	"primary": [Color("#f4c95d"), 2.0], "secondary": [Color("#ffffff"), 1.0],
 }
 const ORDER := ["secondary", "primary", "trunk", "motorway"]
 

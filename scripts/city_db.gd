@@ -21,6 +21,8 @@ const _RAW: Array[Dictionary] = [
 	{"id": "amsterdam", "name": "Ámsterdam", "country": "Países Bajos", "lat": 52.3690,
 		"lon": 4.8950},
 	{"id": "warszawa", "name": "Varsovia", "country": "Polonia", "lat": 52.2320, "lon": 21.0100},
+	{"id": "helsinki", "name": "Helsinki", "country": "Finlandia", "lat": 60.1700,
+		"lon": 24.9440},
 	{"id": "praha", "name": "Praga", "country": "Chequia", "lat": 50.0830, "lon": 14.4250},
 	{"id": "wien", "name": "Viena", "country": "Austria", "lat": 48.2050, "lon": 16.3700},
 	{"id": "istanbul", "name": "Estambul", "country": "Turquía", "lat": 41.0300, "lon": 28.9800},

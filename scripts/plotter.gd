@@ -129,7 +129,8 @@ static func _pieces(wedge: PackedVector2Array, slab: PackedVector2Array,
 	return out
 
 
-static func _minus(parts: Array[PackedVector2Array], cut: PackedVector2Array) -> Array[PackedVector2Array]:
+static func _minus(parts: Array[PackedVector2Array],
+		cut: PackedVector2Array) -> Array[PackedVector2Array]:
 	var out: Array[PackedVector2Array] = []
 	for part in parts:
 		out.append_array(Geo.minus(part, cut))
