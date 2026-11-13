@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dwwu0jjwwlonf"
-path="res://.godot/imported/01_block.png-83f7134e330f920e0b892ca209028e1a.ctex"
+uid="uid://bj6nl6t7rw3fm"
+path="res://.godot/imported/12_office_warszawa.png-8860519593550029a5c480b757419396.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://docs/screenshots/01_block.png"
-dest_files=["res://.godot/imported/01_block.png-83f7134e330f920e0b892ca209028e1a.ctex"]
+source_file="res://docs/screenshots/12_office_warszawa.png"
+dest_files=["res://.godot/imported/12_office_warszawa.png-8860519593550029a5c480b757419396.ctex"]
 
 [params]
 

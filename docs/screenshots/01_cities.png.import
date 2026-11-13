@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://3t87hx4lxfx4"
-path="res://.godot/imported/02_block_panned.png-9b4e4d97d430e5b668930916dce1eba7.ctex"
+uid="uid://ck20r2dqptrbw"
+path="res://.godot/imported/01_cities.png-e188c9cbdb7c3fdd02f49960606b936c.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://docs/screenshots/02_block_panned.png"
-dest_files=["res://.godot/imported/02_block_panned.png-9b4e4d97d430e5b668930916dce1eba7.ctex"]
+source_file="res://docs/screenshots/01_cities.png"
+dest_files=["res://.godot/imported/01_cities.png-e188c9cbdb7c3fdd02f49960606b936c.ctex"]
 
 [params]
 

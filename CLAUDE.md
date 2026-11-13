@@ -2,15 +2,17 @@
 
 An idle real-estate tycoon that lives in a small always-on-top desktop widget, same format as the
 owner's other game Tiny Battlegrounds. You open real-estate offices (oficinas inmobiliarias) in
-real neighbourhoods, buy plots around them, earn rent and build up from empty lots to skyscrapers.
-The map is REAL data from OpenStreetMap, drawn as procedural isometric pixel art made with maths.
+real neighbourhoods, buy plots in the streets around them, build on them and earn rent, from empty
+lots to skyscrapers. The streets are REAL data from OpenStreetMap; blocks, plots and buildings are
+made by the game, drawn as procedural isometric pixel art made with maths.
 
 - Engine: **Godot 4.7.1**, GL Compatibility renderer, GDScript only, no autoloads, no addons.
 - Window: 600x600 logical canvas, borderless, always on top, not resizable, stretch mode
   `canvas_items`, nearest texture filter, max 60 fps.
 - Main scene `res://main.tscn` (one node running `scripts/main.gd`).
-- **Current state: skeleton only.** No gameplay, no save, no network. The one scene proves the
-  data -> isometric pipeline on a hand-made sample block.
+- **Current state: map prototype.** Pick a city, see its real map, place offices, download and
+  bake each office's area once from OpenStreetMap, view it in isometric pixel art. No gameplay
+  yet (no money, buying or building).
 
 ## Design (decided so far)
 
@@ -18,16 +20,20 @@ Full text, in Spanish, in `docs/DESIGN.md` (it wins over the older `docs/FEASIBI
 
 - World map (pixel art from Natural Earth coastlines, later) -> pick a city from a shipped
   GeoNames list (no live geocoding: Nominatim forbids autocomplete) -> city map (neighbourhood
-  names + main avenues from Overpass, a few KB) -> click to place an office.
-- Placing an office downloads, ONCE, everything within its max radius (~500 m) from the public
-  Overpass API (no own server; polite User-Agent, retry + mirror fallback, "server busy" message),
-  bakes it into plots and saves it locally forever (~200-500 KB). It never updates.
+  names + main avenues from Overpass, 3-5 MB raw once per city, ~150-250 KB saved) -> click to
+  place an office.
+- **You build; you never buy real buildings.** Placing an office downloads, ONCE, within its max
+  radius (500 m) only the streets (names, refs), railways, land-use zones, parks and water from
+  the public Overpass API (no own server; polite User-Agent, retry + mirror fallback, "server
+  busy" message). No building footprints. The bake derives blocks from the street network and
+  plots along each block's frontage (each plot knows its street and zone); most start as empty
+  lots, a share pre-built with procedural buildings. Saved locally forever, never updated.
 - Office level grows the active radius (e.g. 150 m at level 1) inside the downloaded one, so
   levelling never needs the network. Offices are >= 2x max radius + margin apart (~1.5 km), so
   each is a self-contained island; never stitch snapshots taken at different dates.
-- Plots: buy, rent per minute (offline too, capped), tiers Solar -> Casa -> Urbanizacion (merge
-  2-4 plots) -> Bloque de pisos -> Torre -> Rascacielos. Real plot size and neighbourhood height
-  cap building; rezoning (recalificacion) is a goal. Value modifiers from real data (parks, metro,
+- Plots: buy, build, rent per minute (offline too, capped), tiers Solar -> Casa -> Urbanizacion
+  (merge 2-4 plots) -> Bloque de pisos -> Torre -> Rascacielos. Plot size and zone cap
+  building; rezoning (recalificacion) is a goal. Value modifiers from real data (parks, metro,
   schools, shops, corners, full block). One-click events, prestige ("salir a bolsa"), day/night.
 - Licence: ODbL. "© OpenStreetMap contributors" must stay visible on screen (the HUD reserves it).
 
@@ -39,20 +45,93 @@ describe: in the cloud, render screenshots (below) and look at / share the PNGs.
 
 ## Architecture map
 
-- `scripts/main.gd` - root of `main.tscn`. Builds a SubViewport the size of the whole block,
-  renders `BlockView` into it once (`UPDATE_ONCE`), shows it through a Sprite2D scaled x2
-  (nearest), draws the HUD (title bar, OSM credit line). Right-drag pans (`pan_to`), left-drag
-  moves the OS window, Esc quits.
-- `scripts/block_view.gd` (`BlockView`) - loads a baked block JSON and draws it in `_draw()`:
-  earth slab, paving, roads (quads from centre line + width), lane dashes, greens, empty lots with
-  a for-sale sign, cast shadows, then buildings sorted far-to-near and extruded (viewer-facing
-  walls shaded by facing, window grid with a few lit, roof with parapet, rooftop huts).
-  Projection: `u = x, v = -y`, screen `((u - v) * SCALE, (u + v) * SCALE / 2 - z * RISE)`.
-- `data/sample_block.json` - format `tiny-realestate-block` v1 (from the prototype's
-  `bake_block.py`): `roads[] {name, kind, width, line}`, `greens[] {kind, poly}`,
-  `plots[] {id, cat, osm_type, levels, height_m, area_m2, poly, owned, tier}`, and a 4 m `grid`.
-  Metres, x east / y north, already rotated so streets follow the axes. Hand-made, NOT OSM data.
-- `docs/prototype/` - the Python prototype (Pillow + Shapely) the sample came from; not shipped.
+Everything is drawn by hand; no `Control` nodes. `App` routes all input and hands screens plain
+calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
+
+**Root and screens**
+- `scripts/main.gd` (`App`) - root of `main.tscn`. Owns the current `Screen`, the input (left-drag
+  on the header bar moves the OS window; a press that moves more than `SLOP` is a drag, else a
+  click; Esc = back, quits from the city list) and the download jobs: `Overpass` fetch -> parse
+  and bake on a `Thread` -> save with `Store` -> open the next screen. Prints a `CITY ...` /
+  `OFFICE ...` line with sizes and timings after each job.
+- `screen.gd` (`Screen`) - base for full-window screens. `ui.gd` (`Ui`) - shared drawing: header
+  with the back button (`BACK_RECT`), buttons, outlined labels, the footer with the OSM credit
+  (on every screen) and the red DATOS DE PRUEBA tag in fixture mode. Hit targets >= `MIN_HIT`.
+- `city_pick.gd` (`CityPick`) - the shipped city list, 12 a page with < > arrows.
+- `city_map.gd` (`CityMap`) + `city_paint.gd` (`CityPaint`) - the city map, north up, painted once
+  into a SubViewport at 12 m/px and shown at x1/x2/x4; labels, office markers and the cursor are
+  drawn live on top. The cursor carries the `Rules.MAX_RADIUS` circle, red when closer than
+  `Rules.MIN_SEPARATION` to any office; click = pending spot + confirm box. Clicking an office
+  marker opens it. `center_on`/`hover_latlon`/`pick_latlon`/`confirm` drive it from tools.
+- `loading.gd` (`Loading`) - status, bytes received, spinner; on failure a message with
+  Reintentar / Volver.
+- `office_view.gd` (`OfficeView`) - one saved office: `BlockView` drawn once into a SubViewport
+  the size of the whole disc, shown at x1/x2; street names drawn on top along the streets.
+
+**Data and rules**
+- `city_db.gd` (`CityDb`) - the shipped cities (id, Spanish name, country, map-box centre).
+- `rules.gd` (`Rules`) - `MAX_RADIUS` (500 m), `ACTIVE_RADIUS` per level (150 m at level 1),
+  `MIN_SEPARATION` (1.5 km), nearest office / too-close checks (great-circle distance).
+- `store.gd` (`Store`) - everything under `user://`: `cities/<city>.json`,
+  `offices/index.json`, `offices/<id>.json`. Writes go through a temp file. Offices and city maps
+  made of fixture data are kept apart from real ones (never shown together).
+
+**Download and bake**
+- `overpass.gd` (`Overpass`, a Node) - one query at a time: POST to overpass-api.de, then
+  overpass.kumi.systems, then overpass.private.coffee, waits 2/5/10/20/30 s between tries, 150 s
+  timeout, User-Agent `TinyRealtor/0.1` (no personal data). Detects Overpass's "200 + runtime
+  error" answers. Sets the HTTPS proxy only when `HTTPS_PROXY` is set and the TLS CA only when
+  `SSL_CERT_FILE` or `/root/.ccr/ca-bundle.crt` exists (the cloud container); on a normal PC
+  Godot's defaults apply. Debug flags (after `--`): `--fixture` (or env `TINY_REALTOR_FIXTURE=1`)
+  = no network, made-up data from `Fixture`; `--raw-cache=DIR` = keep/reuse raw answers in DIR
+  keyed by the query's md5 (dev only).
+- `fixture.gd` (`Fixture`) - made-up Overpass-shaped answers: a city box (grid, ring road,
+  river, maybe a coast, "Barrio ..." names) and an office area (the prototype's hand-made
+  Eixample without its buildings when within 1.5 km of it, else a generated street grid).
+- `geo.gd` (`Geo`) - lat/lon <-> local metres, haversine, polygon helpers (`repair` untangles
+  self-intersections, `clip`, `minus`, `cut_out` never leaves holes), multipolygon ring
+  assembly, and `sea()`: sea polygons from coastline ways (land on the left) inside a border.
+  Clipper hands outer rings back counter-clockwise (y up) and holes clockwise.
+- `city_baker.gd` (`CityBaker`) - city query (8 km box: motorway..secondary, coastline, water,
+  rivers, parks, place=borough/suburb/quarter/neighbourhood nodes) and its bake (format
+  `tiny-realtor-city` v1: roads, sea, land, water, rivers, parks, places; names picked so the
+  Latin font can draw them: `name`, else `name:es`/`name:en`/romanised).
+- `block_baker.gd` (`BlockBaker`) - the office query and bake (see the format below). **No
+  buildings are downloaded**: the streets (with names/refs), railways, land-use zones, parks and
+  water within `MAX_RADIUS`. Steps: project, turn so the dominant street direction (length-
+  weighted histogram mod 90 deg) lies on the iso axes, roads/rails/greens/water/sea, then blocks
+  and plots, then the office's plot.
+- `street_graph.gd` (`StreetGraph`) - polygonizes the streets (plus the disc edge): node every
+  crossing, weld at 0.5 m, prune dead ends, walk the faces (leave each node by the next way
+  clockwise; bounded faces are counter-clockwise). Elevated motorways and trams do not bound
+  blocks; other rail lines do.
+- `plotter.gd` (`Plotter`) - parcels one block: a perimeter strip one plot deep (depth and
+  frontage ranges by zone), each side owning the wedge between its corner bisectors, cut across
+  every frontage width; convex corners merge into one corner plot; the middle is the courtyard.
+  Sides lying on the disc edge face no street and get no plots.
+- `block_view.gd` (`BlockView`) - draws a v2 area once: earth disc, water, parks, roads (curbs
+  then asphalt, lane dashes away from junctions), railways, blocks, courtyards, plots (bare lots
+  by zone, some with a for-sale sign), shadows, the dark veil + gold ring outside
+  `active_radius`, then built plots as procedural buildings far-to-near (hazed outside the active
+  radius) and the office (white walls, gold roof, flag and pin; a kiosk when no plot is near).
+  `street_labels()` gives label spots for the overlay. Projection: `u = x, v = -y`, screen
+  `((u - v) * SCALE, (u + v) * SCALE / 2 - z * RISE)`.
+- `docs/prototype/` - the Python prototype (Pillow + Shapely); its `block_raw_overpass.json` is
+  the hand-made Eixample sample the fixture uses. Not shipped.
+
+## Office area format (`tiny-realestate-block` v2)
+
+Metres, x east / y north, already turned by `rotation_deg` so streets follow the axes; origin =
+the office. Top level: `format`, `format_version` 2, `source`, `attribution`, `center {lat, lon}`,
+`rotation_deg`, `radius_m`, `seed`, `fetched`, `data_source` (`osm` | `fixture`), `stats`,
+`office_plot` (plot id or ""), `office` (the meta also kept in the index: id, city, name, lat,
+lon, level, max_radius, active_radius, created, source, stats), and the layers:
+`roads[] {name, ref, kind, width, line}`, `rails[] {kind, line}`, `greens[] {kind, poly}`,
+`courts[] {kind, poly}`, `water[] {kind, poly}` (kind `sea` from coastlines), `land[]` (islands),
+`blocks[] {id, zone, poly}`, `plots[] {id, block, poly, street, corner, zone, front_m, area_m2,
+built_tier, levels, owned}`. Zones: residential / commercial / industrial (from landuse, else
+residential). Tiers: 0 solar, 1 casa, 2 urbanizacion, 3 bloque, 4 torre, 5 rascacielos. Every
+polygon is snapped to 10 cm and guaranteed to triangulate.
 
 ## Conventions (same as Tiny Battlegrounds)
 
@@ -73,14 +152,27 @@ describe: in the cloud, render screenshots (below) and look at / share the PNGs.
 bash tools/cloud/setup.sh                         # fresh container: Godot 4.7.1 + apt deps + import
 godot --headless --path . --import                # after adding/renaming files
 godot --headless --path . --quit-after 300        # boots main.tscn for 300 frames
-bash tools/cloud/screenshot.sh                    # PNGs of the game into docs/screenshots/
+godot --headless --path . --script res://tools/bake_check.gd   # bakes fixtures, checks polygons
+bash tools/cloud/screenshot.sh docs/screenshots --fixture       # the whole flow on test data
+bash tools/cloud/screenshot.sh docs/screenshots --fresh         # the whole flow on real downloads
+godot --headless --path . --script res://tools/net_check.gd     # one small real download
 ```
 
-`screenshot.sh` runs `tools/cloud/capture.gd` under
+`screenshot.sh [outdir] [args]` runs `tools/cloud/capture.gd` under
 `xvfb-run -a -s "-screen 0 1280x1024x24" godot --path . --rendering-driver opengl3 --audio-driver Dummy`
-(mesa llvmpipe), because `--headless` renders nothing. It writes `01_block.png` (opening view),
-`02_block_panned.png` and `03_block_whole.png` (the whole block texture x2). Under Xvfb a
-`WARNING: Could not set V-Sync mode` line is normal.
+(mesa llvmpipe), because `--headless` renders nothing. The capture drives the real flow: city
+list, Barcelona map, cursor, confirm, loading, office (near and far), the red too-close cursor,
+then offices in Tokyo and Warsaw. Extra args: `--fixture`, `--fresh` (also re-download city maps;
+offices are always wiped first), `--spot=city:lat:lon` (repeatable, replaces the places),
+`--raw-cache=DIR`. Under Xvfb a `WARNING: Could not set V-Sync mode` line is normal.
+
+Other tools: `bake_check.gd -- --raw=/abs/answer.json --lat= --lon= [--city]` bakes a saved raw
+Overpass answer; `seed_cache.gd` files a raw answer under the name `--raw-cache` looks for.
+
+**Network in the cloud container**: Overpass hosts must be on the environment's allowlist. In
+this container overpass-api.de reset every TLS handshake, overpass.kumi.systems timed out and
+overpass.private.coffee answered (slowly); the downloader's mirror rotation copes. When nothing
+answers, work with `--fixture` and never present fixture shots as real data.
 
 **What "fail" means**: any `SCRIPT ERROR`, any line starting `ERROR:`, a `Parse Error`, or a
 non-zero exit. Fix it, never commit it. Note `draw_colored_polygon` errors on shapes it cannot
