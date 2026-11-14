@@ -1,7 +1,7 @@
 class_name BlockView
 extends Node2D
 
-# Draws one baked office area (format tiny-realestate-block v2, see BlockBaker) once, as style A
+# Draws one baked office area (format tiny-realestate-block v3, see BlockBaker) once, as style A
 # isometric pixel art (docs/style_mockups/a_battlegrounds), into `texture`; `drawn` fires when it
 # is ready. The caller shows the texture scaled up with nearest filtering and pans it; nothing is
 # redrawn per frame. AreaBuilder turns the area into ops in low-res pixels (Iso.S per metre),
@@ -11,13 +11,16 @@ extends Node2D
 #              dim outside the active radius), the slab and the gold ring, then every object in
 #              DepthSort's painter order, each outlined in ink, faded when outside the radius,
 #              walls painted by the facade shader; price tags on top
+#   3. pick:   alongside the ground pass, each lot's ground and then its buildings in painter's
+#              order, all in the lot's number (red + green * 256 = lot + 1), kept as an Image:
+#              what the player points at is whatever lot is drawn there, a tower's roof included
 # Every pixel is a palette colour: no blending anywhere (render_mode blend_disabled).
 
 signal drawn
 
 const PAD := 12.0
 const DIRS: Array[Vector2] = [Vector2(-1, 0), Vector2(1, 0), Vector2(0, -1), Vector2(0, 1)]
-enum { MODE_GROUND, MODE_SHADOW, MODE_WORLD }
+enum { MODE_GROUND, MODE_SHADOW, MODE_WORLD, MODE_PICK }
 
 # pixel size of the whole drawing
 var size := Vector2.ZERO
@@ -31,6 +34,10 @@ var texture: Texture2D
 var pops: Array[Vector2] = []
 # the office's REALTOR sign in the drawing, which labels keep clear of
 var sign_box := Rect2()
+# the lots as AreaBuilder laid them out ("data", "poly", "screen", "box", "active")
+var lots: Array[Dictionary] = []
+# the pick pass: which lot each pixel of the drawing shows, null until `drawn`
+var pick: Image
 # milliseconds spent building the ops and on the GPU passes, for the logs
 var build_ms := 0
 var draw_ms := 0
@@ -39,6 +46,9 @@ var _block: Dictionary = {}
 var _radius := 0.0
 var _iso: Iso
 var _area: AreaBuilder
+var _pick_bytes := PackedByteArray()
+# lot -> its outline as runs of drawing pixels: [next to it, one further out]
+var _outlines := {}
 
 
 func load_block(path: String) -> bool:
@@ -50,8 +60,8 @@ func load_block(path: String) -> bool:
 
 
 func set_block(block: Dictionary) -> bool:
-	if int(block.get("format_version", 0)) < 2:
-		push_error("BlockView: only format v2 blocks are drawn")
+	if int(block.get("format_version", 0)) < 3:
+		push_error("BlockView: only format v3 areas are drawn (BlockBaker.upgrade older ones)")
 		return false
 	var t0 := Time.get_ticks_msec()
 	_block = block
@@ -73,6 +83,7 @@ func set_block(block: Dictionary) -> bool:
 	_area.build()
 	_area.objects = DepthSort.order(_area.objects)
 	pops = _area.pops
+	lots = _area.lots
 	if not _area.keep_clear.is_empty():
 		sign_box = _area.keep_clear[0]
 	build_ms = Time.get_ticks_msec() - t0
@@ -89,11 +100,15 @@ func _render() -> void:
 	var vs := Vector2i(size)
 	var g := _viewport(vs, _canvas(MODE_GROUND))
 	var s := _viewport(vs, _canvas(MODE_SHADOW))
+	var p := _viewport(vs, _canvas(MODE_PICK))
 	await RenderingServer.frame_post_draw
 	var ground := ImageTexture.create_from_image(g.get_texture().get_image())
 	var shade := ImageTexture.create_from_image(s.get_texture().get_image())
+	pick = p.get_texture().get_image()
+	_pick_bytes = pick.get_data()
 	g.queue_free()
 	s.queue_free()
+	p.queue_free()
 	var under := Sprite2D.new()
 	under.centered = false
 	under.texture = ground
@@ -132,6 +147,69 @@ func _canvas(mode: int) -> Canvas:
 # where a ground point (metres) lands in the drawing, for labels drawn over it
 func project(m: Vector2) -> Vector2:
 	return _iso.p(m.x, m.y)
+
+
+# the lot drawn at this drawing pixel, -1 for none (a street, a park, outside the drawing)
+func lot_at(px: Vector2) -> int:
+	if pick == null:
+		return -1
+	var x := floori(px.x)
+	var y := floori(px.y)
+	if x < 0 or y < 0 or x >= pick.get_width() or y >= pick.get_height():
+		return -1
+	var k := (y * pick.get_width() + x) * 4
+	return (_pick_bytes[k] | (_pick_bytes[k + 1] << 8)) - 1
+
+
+# the outline of everything a lot shows (its ground and buildings, where nothing stands in
+# front), as horizontal runs of drawing pixels: [the ring just outside it, the ring outside that]
+func outline(lot: int) -> Array:
+	if _outlines.has(lot):
+		return _outlines[lot]
+	var out: Array = [[], []]
+	if pick == null or lot < 0 or lot >= lots.size():
+		return out
+	var w := pick.get_width()
+	var full := Rect2i(0, 0, w, pick.get_height())
+	var box := Rect2i((lots[lot]["box"] as Rect2).grow(4.0)).intersection(full)
+	var bw := box.size.x
+	var bh := box.size.y
+	if bw <= 0 or bh <= 0:
+		return out
+	# 1 the lot, 2 the ring next to it, 3 the ring after
+	var cell := PackedByteArray()
+	cell.resize(bw * bh)
+	var want := lot + 1
+	for y in bh:
+		var row := ((box.position.y + y) * w + box.position.x) * 4
+		for x in bw:
+			var k := row + x * 4
+			if (_pick_bytes[k] | (_pick_bytes[k + 1] << 8)) == want:
+				cell[y * bw + x] = 1
+	for ring: int in [2, 3]:
+		var inner: int = ring - 1
+		for y in bh:
+			for x in bw:
+				var i := y * bw + x
+				if cell[i] != 0:
+					continue
+				if (x > 0 and cell[i - 1] == inner) or (x < bw - 1 and cell[i + 1] == inner) \
+						or (y > 0 and cell[i - bw] == inner) \
+						or (y < bh - 1 and cell[i + bw] == inner):
+					cell[i] = ring
+	for ring: int in [2, 3]:
+		var runs: Array = out[ring - 2]
+		for y in bh:
+			var start := -1
+			for x in bw + 1:
+				var on: bool = x < bw and cell[y * bw + x] == ring
+				if on and start < 0:
+					start = x
+				elif not on and start >= 0:
+					runs.append(Rect2(box.position.x + start, box.position.y + y, x - start, 1))
+					start = -1
+	_outlines[lot] = out
+	return out
 
 
 # street name labels: for each name, spots along its straight stretches (every 60 m on a long
@@ -228,6 +306,22 @@ class Canvas:
 						_op(op, Vector2.ZERO, how)
 				for op: Array in area.post:
 					_op(op, Vector2.ZERO, 1)
+			MODE_PICK:
+				for i in area.lots.size():
+					var pts: PackedVector2Array = area.lots[i]["screen"]
+					if pts.size() >= 3 and not Geometry2D.triangulate_polygon(pts).is_empty():
+						draw_colored_polygon(pts, _lot_code(i))
+				for obj: Dictionary in area.objects:
+					var lot: int = obj["lot"]
+					if lot < 0:
+						continue
+					var code := _lot_code(lot)
+					var offs: Array[Vector2] = [Vector2.ZERO]
+					if obj["outline"]:
+						offs.append_array(DIRS)
+					for d in offs:
+						for op: Array in obj["ops"]:
+							_pick_op(op, d, code)
 
 	# how: 0 palette codes (ground pass), 1 colour, 2 faded, 3 ink silhouette
 	func _op(op: Array, off: Vector2, how: int) -> void:
@@ -263,6 +357,28 @@ class Canvas:
 					r.end, Vector2(r.position.x, r.end.y)]), PackedColorArray([code, code, code,
 					code]), PackedVector2Array([a.position + base, Vector2(a.end.x,
 					a.position.y) + base, a.end + base, Vector2(a.position.x, a.end.y) + base]))
+
+	# an op in one flat colour, for the pick pass; a wall's quad is trimmed to the wall itself
+	func _pick_op(op: Array, off: Vector2, code: Color) -> void:
+		match op[0]:
+			Painter.OP_POLY:
+				var pts: PackedVector2Array = op[1]
+				draw_colored_polygon(Iso.moved(pts, off), code)
+			Painter.OP_RECT:
+				var r: Rect2 = op[1]
+				draw_rect(Rect2(r.position + off, r.size), code)
+			Painter.OP_WALL:
+				var q: PackedVector2Array = op[1]
+				var quad := PackedVector2Array([q[0] + Vector2(0, 2), q[1] + Vector2(0, 2),
+					q[2] - Vector2(0, 2), q[3] - Vector2(0, 2)])
+				if not Geometry2D.triangulate_polygon(Iso.moved(quad, off)).is_empty():
+					draw_colored_polygon(Iso.moved(quad, off), code)
+			Painter.OP_TEX:
+				var sp := Sprites.get_sprite(op[1])
+				draw_rect(Rect2(op[2] + sp[1] + off, sp[2]), code)
+
+	static func _lot_code(lot: int) -> Color:
+		return Color8((lot + 1) & 255, ((lot + 1) >> 8) & 255, 0)
 
 	static func _tone(idx: int, how: int) -> Color:
 		match how:
