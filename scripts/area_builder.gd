@@ -1,27 +1,32 @@
 class_name AreaBuilder
 extends RefCounted
 
-# Turns a baked office area (format v2) into what BlockView draws, as ops in low-res pixels:
+# Turns a baked office area (format v3) into what BlockView draws, as ops in low-res pixels:
 #   ground  - palette indices for the ground pass (pavement, roads, parks, water, lots, marks)
 #   shadows - the cast-shadow mask (white polygons)
 #   pre     - drawn in colour over the ground before any object (the slab's earth cut, the ring)
 #   objects - buildings, trees, cars, lamps, people: each with its ops, footprint hull and
 #             screen box, put in painter's order by DepthSort and outlined in ink when drawn
 #   post    - drawn last, over everything (price tags)
-# The building recipes per tier are the mockup's (gen_battlegrounds.py build_tier, office,
-# roof_props, car_obj...), fed by the plot's own polygon, tier, levels, zone and owned flag.
+# Each lot ("terreno", the file's plots[]) is drawn as a little development of its tier, laid
+# out here from the lot's own polygon, street sides, tier, levels, zone and owned flag, so a lot
+# can be rebuilt at any tier without touching the file: 0 an empty fenced lot with a sale sign,
+# 1 a row of houses with gardens, 2 bigger houses with pools, 3 apartment blocks around a
+# courtyard, 4 one to three towers on a plaza, 5 a skyscraper on a podium; industrial lots get
+# sheds in a yard. The building recipes are the mockup's (gen_battlegrounds.py build_tier,
+# office, roof_props, car_obj...). Every object remembers its lot, for the pick pass.
 # Street furniture (trees, lamps, cars, people) is placed from the blocks and roads with stable
 # hashes, so the same area always looks the same.
 
 const DISC_SIDES := 192
 const SLAB_DEPTH := 14.0
 const FACADES: Array[String] = ["CRM", "OCH", "SAL", "STN", "CRM", "OCH"]
-# the share of empty plots with a "for sale" sign inside the active radius, and how many of the
-# nearest get a price tag over them
-const SIGN_EVERY := 0.15
+# how many of the empty lots nearest the office get a price tag over their sale sign
 const TAGS := 5
 # placeholder asking price per square metre, until the game has an economy
 const PRICE_M2 := 300.0
+# a skyscraper's podium, in pixels
+const PODIUM_Z := 11.0
 const STREET_TREE_EVERY := 9.0
 const LAMP_EVERY := 17.0
 const DASH_CLEAR := 14.0
@@ -31,6 +36,14 @@ const GREEN_KIND := {"pitch": "GRASS_L", "playground": "GRASS_L", "golf_course":
 	"forest": "GRASS_D", "wood": "GRASS_D", "scrub": "GRASS_D", "heath": "GRASS_D",
 	"cemetery": "GRASS_D", "sand": "DIRT_L", "beach": "DIRT_L"}
 const DENSE_TREES := ["forest", "wood", "scrub", "park", "cemetery", "nature_reserve"]
+# building sites along a lot's streets by tier: depth and frontage width ranges (m)
+const SITE_DEPTH := [Vector2(0, 0), Vector2(13, 17), Vector2(21, 27), Vector2(14, 18)]
+const SITE_FRONT := [Vector2(0, 0), Vector2(9, 12), Vector2(16, 22), Vector2(14, 24)]
+const SHED_DEPTH := Vector2(22, 30)
+const SHED_FRONT := Vector2(18, 30)
+# garden and plaza trees: one per this many square metres
+const GARDEN_TREE := 70.0
+const PLAZA_TREE := 120.0
 
 var iso: Iso
 var radius := 0.0
@@ -42,13 +55,20 @@ var objects: Array = []
 var post: Array = []
 # where income pops rise from: over the roofs of what the player owns
 var pops: Array[Vector2] = []
+# one entry per lot (index = the file's plots[] index): "data" (the plot), "poly" (ground
+# metres), "screen" (its ground in drawing pixels), "box" (drawing pixels it and its buildings
+# cover), "active" (inside the office's radius)
+var lots: Array[Dictionary] = []
 # the highest pixel any object reaches above its ground point, for the drawing's bounds
 var tallest := 40.0
 
 var _block: Dictionary
 var _pt: Painter
 var _junctions: Array[Dictionary] = []
-var _lots: Array[Dictionary] = []
+var _for_sale: Array[Dictionary] = []
+# the lot being built (its objects remember it) and whether its buildings are faded, -1 = none
+var _lot_now := -1
+var _lot_fade := -1
 # screen boxes price tags and labels must keep clear of (the office's sign)
 var keep_clear: Array[Rect2] = []
 
@@ -66,17 +86,26 @@ func _init(camera: Iso, block: Dictionary, active_radius: float) -> void:
 func build() -> void:
 	_find_junctions()
 	_ground_base()
-	_ground_plots()
 	_ground_marks()
 	_slab()
 	var office: String = _block.get("office_plot", "")
 	var has_office := false
-	for plot: Dictionary in _block["plots"]:
+	var plots: Array = _block["plots"]
+	for i in plots.size():
+		var plot: Dictionary = plots[i]
+		var poly := _pts(plot["poly"])
+		var c := Iso.centroid(poly)
+		lots.append({"data": plot, "poly": poly, "screen": iso.poly(poly),
+			"active": active <= 0.0 or c.length() <= active})
+		_lot_now = i
+		_lot_fade = 0 if lots[i]["active"] else 1
 		if plot["id"] == office:
-			_office(plot)
+			_develop_office(plot, poly)
 			has_office = true
-		elif int(plot["built_tier"]) > 0:
-			_building(plot)
+		else:
+			_develop(plot, poly)
+		_lot_now = -1
+		_lot_fade = -1
 	if not has_office:
 		_kiosk()
 	_trees()
@@ -84,20 +113,25 @@ func build() -> void:
 	_cars()
 	_tags()
 	_ring()
+	_lot_boxes()
 
 
-# the top of the tallest thing in a plot of this tier, in pixels
+# the top of the tallest thing in a lot of this tier, in pixels
 static func top_of(tier: int, levels: int) -> float:
 	match tier:
 		1, 2:
 			return 30.0
 		3:
-			return 6.0 + (clampi(levels, 4, 9) - 1) * 4.0 + 2.0 + 6.0
+			return _apt_top(levels + 1) + 6.0
 		4:
-			return _tower_floors(levels) * 3.0 + 7.0 + 7.0 + 12.0
+			return _tower_floors(levels + 3) * 3.0 + 7.0 + 7.0 + 12.0
 		5:
-			return _sky_floors(levels) * 3.0 + 9.0 + 33.0 + 18.0
+			return PODIUM_Z + _sky_floors(levels) * 3.0 + 9.0 + 33.0 + 18.0
 	return 16.0
+
+
+static func _apt_top(levels: int) -> float:
+	return 6.0 + (clampi(levels, 4, 9) - 1) * 4.0 + 2.0
 
 
 static func _tower_floors(levels: int) -> int:
@@ -201,71 +235,6 @@ func _rails() -> void:
 				var p1 := b + side * off
 				if p0.length() < radius - 1.0 and p1.length() < radius - 1.0:
 					_g_line(p0, p1, "SL3")
-
-
-# every plot's own ground: dirt lots with fence posts and tufts, gardens with a hedge, plazas
-func _ground_plots() -> void:
-	var office: String = _block.get("office_plot", "")
-	for plot: Dictionary in _block["plots"]:
-		var poly := _pts(plot["poly"])
-		var tier := int(plot["built_tier"])
-		var id: String = plot["id"]
-		if id == office:
-			continue
-		if tier == 0:
-			_lot(plot, poly)
-		elif tier in [1, 2] and plot["zone"] != "industrial":
-			_g_poly(poly, "GRASS")
-			var hedge := Iso.offset(poly, -0.6)
-			for i in hedge.size():
-				_g_line(hedge[i], hedge[(i + 1) % hedge.size()], "GRASS_DD")
-		elif tier == 1:
-			_g_poly(poly, "PAVE_S")
-		elif tier >= 4:
-			_g_poly(poly, "PAVE_L")
-
-
-func _lot(plot: Dictionary, poly: PackedVector2Array) -> void:
-	var id: String = plot["id"]
-	var zone: String = plot["zone"]
-	_g_poly(poly, "PAVE_S" if zone == "industrial" else "DIRT")
-	# fence posts along the edges
-	for i in poly.size():
-		var a := poly[i]
-		var b := poly[(i + 1) % poly.size()]
-		var m := int(a.distance_to(b) / 2.5)
-		for j in m + 1:
-			_g_dot(iso.pv(a.lerp(b, float(j) / maxi(1, m))), "DIRT_D")
-	# dirt clods and grass tufts
-	var c := Iso.centroid(poly)
-	var inner := Iso.offset(poly, -1.5)
-	for j in 14:
-		var q := c + Vector2(Iso.h01(id + "x%d" % j) - 0.5, Iso.h01(id + "y%d" % j) - 0.5) * 16.0
-		if inner.size() < 3 or not Geometry2D.is_point_in_polygon(q, inner):
-			continue
-		var t := iso.pv(q)
-		if j % 3 == 0:
-			_g_dot(t, "GRASS")
-			_g_dot(t + Vector2(-1, 0), "GRASS_D")
-			_g_dot(t + Vector2(0, -1), "GRASS_L")
-			_g_dot(t + Vector2(1, 0), "GRASS_D")
-		elif zone != "industrial":
-			_g_dot(t, "DIRT_L")
-			_g_dot(t + Vector2(1, 0), "DIRT_D")
-	if active > 0.0 and c.length() > active:
-		return
-	if Iso.h01(id + "sign") > SIGN_EVERY:
-		return
-	# the sign stands half way to the corner nearest the viewer
-	var front := poly[0]
-	for q in poly:
-		if Iso.depth(q) > Iso.depth(front):
-			front = q
-	var at := c.lerp(front, 0.5)
-	_object("sale" + id, Iso.square(at, 0.4), true, false)
-	_pt.tex("sale", iso.pv(at))
-	_close(0.0)
-	_lots.append({"at": c, "area": float(plot["area_m2"])})
 
 
 # lane dashes down the streets and zebra crossings at the junctions
@@ -405,7 +374,7 @@ var _cur: Dictionary = {}
 # starts recording an object standing on `foot` (ground metres)
 func _object(key: String, foot: PackedVector2Array, outline: bool = true,
 		shadow: bool = true) -> void:
-	_cur = {"foot": foot, "outline": outline, "shadow": shadow, "h": 0.0}
+	_cur = {"foot": foot, "outline": outline, "shadow": shadow, "h": 0.0, "lot": _lot_now}
 	_cur["ops"] = _pt.begin(key)
 
 
@@ -425,7 +394,7 @@ func _close(h: float, shadow_foot: PackedVector2Array = PackedVector2Array()) ->
 	_cur["hull"] = hull
 	_cur["rect"] = box.grow(1.0)
 	_cur["key"] = c.x - c.y
-	_cur["fade"] = active > 0.0 and c.length() > active + 2.0
+	_cur["fade"] = _lot_fade == 1 if _lot_fade >= 0 else active > 0.0 and c.length() > active + 2.0
 	objects.append(_cur)
 	if _cur["shadow"] and h > 0.0:
 		_shadow(shadow_foot if shadow_foot.size() >= 3 else foot, minf(h, 40.0))
@@ -473,31 +442,282 @@ func _shadow(foot: PackedVector2Array, h: float) -> void:
 
 # --- buildings -----------------------------------------------------------------------------------
 
-func _building(plot: Dictionary) -> void:
+# a lot's development: ground, then its buildings on sites along its streets
+func _develop(plot: Dictionary, poly: PackedVector2Array) -> void:
 	var id: String = plot["id"]
-	var poly := Iso.clean(_pts(plot["poly"]))
 	var tier := int(plot["built_tier"])
+	var zone: String = plot["zone"]
 	var owned: bool = plot.get("owned", false)
 	var levels := int(plot.get("levels", 4))
-	var facade := Pal.ramp_of(FACADES[int(Iso.h01(id + "fac") * FACADES.size())])
-	var roof := Pal.ramp_of("TEAL" if owned else "TER")
+	if tier <= 0:
+		_lot(plot, poly)
+		return
 	if owned:
 		pops.append(iso.pv(Iso.centroid(poly), top_of(tier, levels)))
-	if tier <= 2 and plot["zone"] == "industrial":
-		_shed(id, poly, owned)
-	elif tier <= 2:
-		_house(id, poly, tier, facade, owned)
-	elif tier == 3:
-		var hz := 6.0 + (clampi(levels, 4, 9) - 1) * 4.0 + 2.0
-		_object(id, poly)
-		_pt.prism(poly, 0.0, hz, WorldShader.STYLE_APT, facade, roof)
-		_roof_props(id, poly, hz, owned, false)
+	if zone == "industrial" and tier <= 2:
+		_g_poly(poly, "PAVE_S")
+		for s: Dictionary in _sites(plot, poly, SHED_DEPTH, SHED_FRONT):
+			_shed(s["id"], Iso.clean(s["poly"]), owned)
+		return
+	match tier:
+		1, 2:
+			_g_poly(poly, "GRASS")
+			var built: Array[PackedVector2Array] = []
+			for s: Dictionary in _sites(plot, poly, SITE_DEPTH[tier], SITE_FRONT[tier]):
+				var site := Iso.clean(s["poly"])
+				var hedge := Iso.offset(site, -0.6)
+				for i in hedge.size():
+					_g_line(hedge[i], hedge[(i + 1) % hedge.size()], "GRASS_DD")
+				_house(s["id"], site, tier, _facade(s["id"]), owned)
+				built.append(site)
+			_scatter(poly, id + "g", GARDEN_TREE * 1.6, built)
+		3:
+			_g_poly(poly, "GRASS")
+			var built := _apartments(plot, poly, owned, "")
+			_scatter(poly, id + "g", GARDEN_TREE, built)
+		4:
+			_plaza(poly, id)
+			var n := clampi(int(Iso.area(poly) / 1900.0), 1, 3)
+			var half := clampf(sqrt(Iso.area(poly)) * 0.13, 6.0, 9.0)
+			var built: Array[PackedVector2Array] = []
+			var spots := _spots(poly, n, half, id)
+			for k in spots.size():
+				var foot := Iso.square(spots[k], half)
+				var lv := levels + int(Iso.h01(id + "tl%d" % k) * 7.0) - 3
+				_tower("%s_t%d" % [id, k], foot, lv, owned)
+				built.append(foot)
+			_scatter(poly, id + "p", PLAZA_TREE, built)
+		_:
+			_plaza(poly, id)
+			var half := clampf(sqrt(Iso.area(poly)) * 0.18, 8.0, 13.0)
+			var spots := _spots(poly, 1, half, id, true)
+			var built: Array[PackedVector2Array] = []
+			if not spots.is_empty():
+				var foot := Iso.square(spots[0], half)
+				var podium := _podium(poly, spots[0], half + 4.0)
+				_sky(id, foot, levels, owned, podium)
+				built.append(podium if podium.size() >= 3 else foot)
+			_scatter(poly, id + "p", PLAZA_TREE, built)
+
+
+# the player's office lot: apartment blocks round a courtyard, the REALTOR building on the site
+# nearest the clicked point
+func _develop_office(plot: Dictionary, poly: PackedVector2Array) -> void:
+	_g_poly(poly, "GRASS")
+	var built := _apartments(plot, poly, true, "office")
+	_scatter(poly, plot["id"] + "g", GARDEN_TREE, built)
+
+
+# apartment blocks on the lot's street sites, each its own height and facade, so a lot reads
+# as a row of buildings; `office` puts the office on the site nearest (0, 0) instead
+func _apartments(plot: Dictionary, poly: PackedVector2Array, owned: bool,
+		office: String) -> Array[PackedVector2Array]:
+	var levels := int(plot.get("levels", 5))
+	var sites := _sites(plot, poly, SITE_DEPTH[3], SITE_FRONT[3])
+	var mine := -1
+	if office != "":
+		var best := INF
+		for k in sites.size():
+			var d := Iso.centroid(sites[k]["poly"]).length()
+			if d < best:
+				best = d
+				mine = k
+	var built: Array[PackedVector2Array] = []
+	for k in sites.size():
+		var site := Iso.clean(sites[k]["poly"])
+		var sid: String = sites[k]["id"]
+		_g_poly(site, "PAVE")
+		built.append(site)
+		if k == mine:
+			_office_at(plot["id"], site)
+			continue
+		var lv := levels + int(Iso.h01(sid + "lv") * 3.0) - 1
+		var hz := _apt_top(lv)
+		var roof := Pal.ramp_of("TEAL" if owned else "TER")
+		_object(sid, site)
+		_pt.prism(site, 0.0, hz, WorldShader.STYLE_APT, _facade(sid), roof)
+		_roof_props(sid, site, hz, owned, false)
 		_close(hz)
 		tallest = maxf(tallest, hz + 16.0)
-	elif tier == 4:
-		_tower(id, poly, levels, owned)
-	else:
-		_sky(id, poly, levels, owned)
+	if owned and office == "":
+		pops.append(iso.pv(Iso.centroid(poly), _apt_top(levels + 1)))
+	return built
+
+
+# the lot's building sites (Plotter.sites) with ids; a lot whose file names no street sides
+# builds along all of them
+func _sites(plot: Dictionary, poly: PackedVector2Array, depth: Vector2,
+		front: Vector2) -> Array[Dictionary]:
+	var id: String = plot["id"]
+	var ring := poly
+	if Geo.area(ring) < 0.0:
+		ring = ring.duplicate()
+		ring.reverse()
+	var fronts := PackedInt32Array(plot.get("fronts", []))
+	if fronts.is_empty():
+		for i in ring.size():
+			fronts.append(i)
+	var d := lerpf(depth.x, depth.y, Iso.h01(id + "depth"))
+	var out := Plotter.sites(ring, fronts, d, front, id)
+	for k in out.size():
+		out[k]["id"] = "%s_%d" % [id, k]
+	return out
+
+
+func _facade(key: String) -> int:
+	return Pal.ramp_of(FACADES[int(Iso.h01(key + "fac") * FACADES.size())])
+
+
+# a paved plaza with a planted border
+func _plaza(poly: PackedVector2Array, id: String) -> void:
+	_g_poly(poly, "PAVE_L")
+	var ring := Iso.clean(poly)
+	for i in ring.size():
+		var a := ring[i]
+		var b := ring[(i + 1) % ring.size()]
+		var m := int(a.distance_to(b) / 3.0)
+		for j in m:
+			if Iso.h01(id + "pl%d_%d" % [i, j]) < 0.5:
+				continue
+			var q := iso.pv(a.lerp(b, (j + 0.5) / maxi(1, m)))
+			_g_dot(q, "GRASS_D")
+
+
+# up to n square building spots of half-size `half` well inside the lot, a street-width apart,
+# picked by hash (or the one nearest the middle when `central`); smaller when nothing fits
+func _spots(poly: PackedVector2Array, n: int, half: float, seed: String,
+		central: bool = false) -> Array[Vector2]:
+	var out: Array[Vector2] = []
+	var inner := Iso.offset(poly, -3.0)
+	if inner.size() < 3:
+		return out
+	var box := Geo.bounds(inner)
+	var h := half
+	while h >= 5.0 and out.is_empty():
+		var step := h * 2.0 + 7.0
+		var cand: Array = []
+		var y := box.position.y + h
+		while y <= box.end.y - h:
+			var x := box.position.x + h
+			while x <= box.end.x - h:
+				var at := Vector2(x, y)
+				if Iso.contains(inner, Iso.square(at, h)):
+					cand.append([Iso.h01(seed + "sp%.0f_%.0f" % [x, y]), at])
+				x += 2.0
+			y += 2.0
+		if central:
+			var mid := Iso.centroid(poly)
+			cand.sort_custom(func(p: Array, q: Array) -> bool:
+				return (p[1] as Vector2).distance_to(mid) < (q[1] as Vector2).distance_to(mid))
+		else:
+			cand.sort_custom(func(p: Array, q: Array) -> bool: return p[0] < q[0])
+		for c: Array in cand:
+			var at: Vector2 = c[1]
+			var clear := true
+			for o in out:
+				if absf(o.x - at.x) < step and absf(o.y - at.y) < step:
+					clear = false
+					break
+			if clear:
+				out.append(at)
+				if out.size() >= n:
+					break
+		if out.is_empty():
+			h *= 0.8
+	return out
+
+
+# a skyscraper's podium: a square round its tower, cut to the lot
+func _podium(poly: PackedVector2Array, at: Vector2, half: float) -> PackedVector2Array:
+	var inner := Iso.offset(poly, -2.0)
+	if inner.size() < 3:
+		return PackedVector2Array()
+	var best := PackedVector2Array()
+	for part in Geo.clip(Iso.square(at, half), inner):
+		if best.size() < 3 or Iso.area(part) > Iso.area(best):
+			best = part
+	return Iso.clean(best) if best.size() >= 3 else best
+
+
+# an empty lot: dirt (a yard in industrial zones) inside fence posts, with clods and tufts, and
+# a sale sign when it is inside the office's radius
+func _lot(plot: Dictionary, poly: PackedVector2Array) -> void:
+	var id: String = plot["id"]
+	var zone: String = plot["zone"]
+	_g_poly(poly, "PAVE_S" if zone == "industrial" else "DIRT")
+	var c := Iso.centroid(poly)
+	var inner := Iso.offset(poly, -1.5)
+	var box := Geo.bounds(poly)
+	# weeds take over patches of a big lot: rough blobs, darker at the rim
+	if zone != "industrial" and inner.size() >= 3:
+		for j in int(Iso.area(poly) / 260.0):
+			var at := box.position + box.size * Vector2(Iso.h01(id + "wx%d" % j),
+				Iso.h01(id + "wy%d" % j))
+			var r := 3.0 + Iso.h01(id + "wr%d" % j) * 6.0
+			var blob := PackedVector2Array()
+			for k in 9:
+				var a := TAU * k / 9.0
+				blob.append(at + Vector2(cos(a), sin(a)) * r * (0.7 + 0.5 * Iso.h01(id + "w%d_%d" % [j, k])))
+			for part in Geo.clip(blob, inner):
+				_g_poly(Iso.clean(part), "GRASS_D")
+				var core := Iso.offset(part, -1.2)
+				if core.size() >= 3:
+					_g_poly(core, "GRASS")
+	# fence posts along the edges
+	for i in poly.size():
+		var a := poly[i]
+		var b := poly[(i + 1) % poly.size()]
+		var m := int(a.distance_to(b) / 2.5)
+		for j in m + 1:
+			_g_dot(iso.pv(a.lerp(b, float(j) / maxi(1, m))), "DIRT_D")
+	# dirt clods and grass tufts, about one per 12 square metres
+	var want := int(Iso.area(poly) / 12.0)
+	for j in want:
+		var q := box.position + box.size * Vector2(Iso.h01(id + "x%d" % j), Iso.h01(id + "y%d" % j))
+		if inner.size() < 3 or not Geometry2D.is_point_in_polygon(q, inner):
+			continue
+		var t := iso.pv(q)
+		if j % 3 == 0:
+			_g_dot(t, "GRASS")
+			_g_dot(t + Vector2(-1, 0), "GRASS_D")
+			_g_dot(t + Vector2(0, -1), "GRASS_L")
+			_g_dot(t + Vector2(1, 0), "GRASS_D")
+		elif zone != "industrial":
+			_g_dot(t, "DIRT_L")
+			_g_dot(t + Vector2(1, 0), "DIRT_D")
+	# a few bushes come up in a big empty lot
+	var bushes := int(Iso.area(poly) / 450.0)
+	var deep := Iso.offset(poly, -3.0)
+	for j in bushes:
+		var q := box.position + box.size * Vector2(Iso.h01(id + "bx%d" % j), Iso.h01(id + "by%d" % j))
+		if deep.size() >= 3 and Geometry2D.is_point_in_polygon(q, deep):
+			_tree(q, id + "bush%d" % j, false)
+	if active > 0.0 and c.length() > active:
+		return
+	# the sign stands half way to the corner nearest the viewer
+	var front := poly[0]
+	for q in poly:
+		if Iso.depth(q) > Iso.depth(front):
+			front = q
+	var at := c.lerp(front, 0.5)
+	_object("sale" + id, Iso.square(at, 0.4), true, false)
+	_pt.tex("sale", iso.pv(at))
+	_close(0.0)
+	_for_sale.append({"at": c, "area": float(plot["area_m2"])})
+
+
+# each lot's box in the drawing: its ground and everything standing on it
+func _lot_boxes() -> void:
+	for i in lots.size():
+		var pts: PackedVector2Array = lots[i]["screen"]
+		var box := Rect2(pts[0], Vector2.ZERO) if not pts.is_empty() else Rect2()
+		for q in pts:
+			box = box.expand(q)
+		lots[i]["box"] = box
+	for obj: Dictionary in objects:
+		var k: int = obj["lot"]
+		if k >= 0:
+			lots[k]["box"] = (lots[k]["box"] as Rect2).merge(obj["rect"])
 
 
 func _shed(id: String, poly: PackedVector2Array, owned: bool) -> void:
@@ -518,6 +738,7 @@ func _house(id: String, poly: PackedVector2Array, tier: int, facade: int, owned:
 	var rect := Iso.min_rect(inner, 0.78 if tier == 1 else 0.86)
 	if rect.size() < 4:
 		return
+	rect = _cap_rect(rect, 11.0 if tier == 1 else 14.0, 8.0 if tier == 1 else 10.0)
 	# pushed toward the back of the plot when it still fits
 	var push := Vector2(-1.2, 1.6) if tier == 1 else Vector2(-1.6, 2.0)
 	var moved := Iso.moved(rect, push)
@@ -554,6 +775,17 @@ func _house(id: String, poly: PackedVector2Array, tier: int, facade: int, owned:
 		n += 1
 		if n >= 2:
 			break
+
+
+# a rectangle (A->B its long side) shrunk about its middle to at most long x short metres, so a
+# house stays house-sized on a deep site
+static func _cap_rect(rect: PackedVector2Array, long: float, short: float) -> PackedVector2Array:
+	var c := (rect[0] + rect[2]) * 0.5
+	var e := rect[1] - rect[0]
+	var f := rect[3] - rect[0]
+	var he := e.normalized() * minf(e.length(), long) * 0.5
+	var hf := f.normalized() * minf(f.length(), short) * 0.5
+	return PackedVector2Array([c - he - hf, c + he - hf, c + he + hf, c - he + hf])
 
 
 # a pool in the leftover garden of an estate, cream rim and cyan water
@@ -603,20 +835,24 @@ func _tower(id: String, poly: PackedVector2Array, levels: int, owned: bool) -> v
 	tallest = maxf(tallest, crown + 16.0)
 
 
-func _sky(id: String, poly: PackedVector2Array, levels: int, owned: bool) -> void:
+func _sky(id: String, poly: PackedVector2Array, levels: int, owned: bool,
+		podium: PackedVector2Array = PackedVector2Array()) -> void:
 	var b0 := Iso.offset(poly, -1.0)
 	if b0.size() < 3:
 		b0 = poly
 	var b1 := Iso.offset(b0, -1.6)
 	var b2 := Iso.offset(b1, -1.8) if b1.size() >= 3 else PackedVector2Array()
-	var z0 := 6.0 + _sky_floors(levels) * 3.0 + 3.0
+	var base := PODIUM_Z if podium.size() >= 3 else 0.0
+	var z0 := base + 6.0 + _sky_floors(levels) * 3.0 + 3.0
 	var z1 := z0 + 21.0
 	var z2 := z1 + 12.0
 	var con := Pal.ramp_of("CON")
 	var teal := Pal.ramp_of("TEAL")
 	var sty := WorldShader.STYLE_SKY
-	_object(id, b0)
-	_pt.prism(b0, 0.0, z0, sty, 0, teal if owned else con, true, 1 | (1 << 1))
+	_object(id, podium if podium.size() >= 3 else b0)
+	if podium.size() >= 3:
+		_pt.prism(podium, 0.0, base, WorldShader.STYLE_TOWER, con, teal if owned else con)
+	_pt.prism(b0, base, z0, sty, 0, teal if owned else con, true, 1 | (1 << 1), base == 0.0)
 	var top := z0
 	var crown := b0
 	if b1.size() >= 3 and Iso.area(b1) > 6.0:
@@ -639,7 +875,7 @@ func _sky(id: String, poly: PackedVector2Array, levels: int, owned: bool) -> voi
 			if q.x + q.y < far.x + far.y:
 				far = q
 		_pt.tex("flag:6:cyan", iso.pv(far, top) + Vector2(1, 1))
-	_close(top, b0)
+	_close(top, podium if podium.size() >= 3 else b0)
 	tallest = maxf(tallest, top + 20.0)
 
 
@@ -691,11 +927,6 @@ func _roof_props(id: String, g: PackedVector2Array, hz: float, owned: bool, mode
 
 
 # the player's office: stone, a cyan shop front, a teal roof, the REALTOR sign and a flag
-func _office(plot: Dictionary) -> void:
-	var poly := Iso.clean(_pts(plot["poly"]))
-	_office_at(plot["id"], poly)
-
-
 func _office_at(id: String, poly: PackedVector2Array) -> void:
 	var hz := 7.0 + 5.0 * 5.0 + 2.0
 	_object(id, poly)
@@ -737,7 +968,7 @@ func _tree(at: Vector2, seed: String, big: bool) -> void:
 
 func _trees() -> void:
 	for c: Dictionary in _block["courts"]:
-		_scatter(_pts(c["poly"]), "c%d" % objects.size(), 150.0)
+		_scatter(_pts(c["poly"]), "c%d" % objects.size(), 80.0)
 	for g: Dictionary in _block["greens"]:
 		var kind: String = g["kind"]
 		if kind in ["pitch", "sand", "beach", "golf_course"]:
@@ -752,11 +983,20 @@ func _trees() -> void:
 
 
 # trees scattered at random inside a polygon, about one per `every` square metres, never two
-# closer than half the spacing, so a garden reads as a grove rather than a grid
-func _scatter(poly: PackedVector2Array, seed: String, every: float) -> void:
+# closer than half the spacing, so a garden reads as a grove rather than a grid; never on or
+# right next to the `avoid` footprints (buildings)
+func _scatter(poly: PackedVector2Array, seed: String, every: float,
+		avoid: Array[PackedVector2Array] = []) -> void:
 	var inner := Iso.offset(poly, -2.0)
 	if inner.size() < 3:
 		return
+	var keep_out: Array[PackedVector2Array] = []
+	var boxes: Array[Rect2] = []
+	for a in avoid:
+		var grown := Iso.offset(a, 1.8)
+		if grown.size() >= 3:
+			keep_out.append(grown)
+			boxes.append(Geo.bounds(grown))
 	var box := Geo.bounds(inner)
 	var want := int(Iso.area(inner) / every)
 	var gap := sqrt(every) * 0.55
@@ -769,6 +1009,12 @@ func _scatter(poly: PackedVector2Array, seed: String, every: float) -> void:
 		if q.length() > radius - 3.0 or not Geometry2D.is_point_in_polygon(q, inner):
 			continue
 		var clear := true
+		for j in keep_out.size():
+			if boxes[j].has_point(q) and Geometry2D.is_point_in_polygon(q, keep_out[j]):
+				clear = false
+				break
+		if not clear:
+			continue
 		for o in placed:
 			if o.distance_to(q) < gap:
 				clear = false
@@ -868,14 +1114,13 @@ func _car(at: Vector2, dir: Vector2, tint: String, seed: String) -> void:
 
 # price tags over the signed lots nearest the office, never one over another
 func _tags() -> void:
-	_lots.sort_custom(func(p: Dictionary, q: Dictionary) -> bool:
+	_for_sale.sort_custom(func(p: Dictionary, q: Dictionary) -> bool:
 		return (p["at"] as Vector2).length() < (q["at"] as Vector2).length())
 	var placed: Array[Rect2] = keep_clear.duplicate()
-	for lot in _lots:
+	for lot in _for_sale:
 		if placed.size() >= TAGS + keep_clear.size():
 			break
-		var price := maxi(1, roundi(float(lot["area"]) * PRICE_M2 / 1000.0))
-		var key := "tag:$%dK" % price
+		var key := "tag:" + price_tag(float(lot["area"]))
 		var at := iso.pv(lot["at"])
 		var sp := Sprites.get_sprite(key)
 		var box := Rect2(at + sp[1], sp[2]).grow(3.0)
@@ -885,6 +1130,19 @@ func _tags() -> void:
 		if free:
 			placed.append(box)
 			post.append([Painter.OP_TEX, key, at])
+
+
+# the placeholder asking price of a lot, until the game has an economy
+static func price_of(area_m2: float) -> int:
+	return maxi(1000, roundi(area_m2 * PRICE_M2 / 1000.0) * 1000)
+
+
+# the price as a short tag: $850K, $1.2M
+static func price_tag(area_m2: float) -> String:
+	var p := price_of(area_m2)
+	if p >= 1000000:
+		return "$%.1fM" % (p / 1000000.0)
+	return "$%dK" % (p / 1000)
 
 
 # --- helpers -------------------------------------------------------------------------------------
