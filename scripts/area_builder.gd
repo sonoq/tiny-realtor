@@ -90,11 +90,6 @@ var mark := Vector2.ZERO
 var mark_box := Rect2()
 # the layout in use; tools that compare the variants switch it
 static var skyline: int = SKYLINE_STYLE
-# street names painted on the asphalt (StreetNames.PAINTED), and where they lie
-var names := false
-var painted: Array = []
-# each lane dash: [its middle (m), first and end index of its ops in `ground`]
-var _dashes: Array = []
 
 
 func _init(camera: Iso, block: Dictionary, active_radius: float) -> void:
@@ -111,10 +106,6 @@ func build() -> void:
 	_find_junctions()
 	_ground_base()
 	_ground_marks()
-	# the names hang on the streets alone (never on what is built), so a lot redraw keeps them;
-	# every tree laid out after them keeps off them
-	if names:
-		_paint_names()
 	_slab()
 	mark = OfficeMark.at(_block)
 	var plots: Array = _block["plots"]
@@ -300,10 +291,8 @@ func _ground_marks() -> void:
 				d += 7.0
 				if p.length() > radius - 4.0 or _near_junction(p, DASH_CLEAR):
 					continue
-				var first := ground.size()
 				for off in lanes:
 					_g_line(p + side * off, p + step * 3.0 + side * off, "CREAM")
-				_dashes.append([p + step * 1.5, first, ground.size()])
 	for j in _junctions:
 		var at: Vector2 = j["at"]
 		if at.length() > radius - 8.0:
@@ -363,43 +352,6 @@ func _find_junctions() -> void:
 					"walk": road["kind"] == "pedestrian"})
 		if arms.size() >= 3:
 			_junctions.append({"at": at, "arms": arms})
-
-
-# street names painted on the asphalt (StreetNames.painted), the lane dashes under them taken out
-func _paint_names() -> void:
-	var js: Array = []
-	for j: Dictionary in _junctions:
-		var wide := 0.0
-		for arm: Dictionary in j["arms"]:
-			wide = maxf(wide, float(arm["width"]) * 0.5)
-		js.append([j["at"], wide])
-	painted = StreetNames.painted(_block, iso, radius, js)
-	var drop := {}
-	for dash: Array in _dashes:
-		for label: Dictionary in painted:
-			var a: Vector2 = label["seg"][0]
-			var b: Vector2 = label["seg"][1]
-			if Geometry2D.get_closest_point_to_segment(dash[0], a, b).distance_to(dash[0]) < 5.0:
-				for k in range(dash[1], dash[2]):
-					drop[k] = true
-	if not drop.is_empty():
-		var kept: Array = []
-		for k in ground.size():
-			if not drop.has(k):
-				kept.append(ground[k])
-		ground = kept
-	for label: Dictionary in painted:
-		ground.append_array(label["ops"])
-
-
-# a sprite drawn here would hide part of a painted street name
-func _on_name(key: String, at: Vector2) -> bool:
-	var sp := Sprites.get_sprite(key)
-	var r := Rect2(at + sp[1], sp[2]).grow(1.0)
-	for label: Dictionary in painted:
-		if r.intersects(label["box"]):
-			return true
-	return false
 
 
 func _near_junction(p: Vector2, clear: float) -> bool:
@@ -1113,11 +1065,9 @@ func _office_mark() -> void:
 # --- greenery and street life --------------------------------------------------------------------
 
 func _tree(at: Vector2, seed: String, big: bool) -> void:
-	var key := "tree:%d:%s" % [int(Iso.h01(seed + "v") * 4.0), "big" if big else "small"]
-	if not painted.is_empty() and _on_name(key, iso.pv(at)):
-		return
 	_object("t" + seed, Iso.square(at, 0.8))
-	_pt.tex(key, iso.pv(at))
+	_pt.tex("tree:%d:%s" % [int(Iso.h01(seed + "v") * 4.0), "big" if big else "small"],
+		iso.pv(at))
 	_close(5.0, Iso.square(at, 1.4))
 
 

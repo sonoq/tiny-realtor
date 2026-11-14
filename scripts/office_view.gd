@@ -5,8 +5,9 @@ extends Screen
 # or two after opening) and this screen shows it through a sprite, so panning only moves the
 # sprite. Drag to pan, wheel or - + to zoom (each art pixel 1, 2 or 3 screen pixels; 2 is the
 # mockup's). Over it, the HUD of the mockup: back button and the neighbourhood's name, how many
-# lots are yours, the office level with its radius bar, street names along the streets and the
-# OpenStreetMap credit. Pointing at a lot outlines everything it shows (BlockView's pick pass:
+# lots are yours, the office level with its radius bar and the OpenStreetMap credit. No street
+# names are written on the map: clicking a street, a pavement or other open ground shows a plate
+# with the nearest street's name and kind for a few seconds (or until the next click). Pointing at a lot outlines everything it shows (BlockView's pick pass:
 # cyan, grey when it is outside the office's radius); clicking it selects it (gold) and opens a
 # card with its street, zone, size, tier and asking price; Esc or the card's X closes the card.
 # A saved v2 area (small plots) is re-parcelled into lots when it is opened, and saved back.
@@ -24,14 +25,8 @@ const VIEW_TOP := 0.0
 const VIEW_BOTTOM := Ui.CANVAS.y
 # where on screen the office sits: a little below the middle, under the HUD's title
 const ANCHOR := Vector2(300, 330)
-# how street names show (StreetNames: MICRO A, PAINTED B, PLATES C, HOVER D); Oscar's pick
-const LABEL_STYLE := StreetNames.PAINTED
-# street names are sheared along the street when it runs at most this steep on screen
-const SHEAR_MAX := 0.75
-# at most this many street plates at once (PLATES)
-const PLATES_MAX := 5
-# the pointer names a street this close to it, in screen pixels (HOVER)
-const HOVER_REACH := 14.0
+# how long a clicked street's name plate stays up (ms)
+const STREET_SHOW_MS := 4000
 # the selected lot's card (OfficePlay draws it)
 const CARD := OfficePlay.CARD
 # the map takes pointing only between the header and the next-move bar, left of the buttons
@@ -48,8 +43,6 @@ const ZONES := {"residential": "Residencial", "commercial": "Comercial",
 
 var office: Dictionary = {}
 var game: Game
-# the street names' look in use; tools that compare the options switch it
-static var labels: int = LABEL_STYLE
 
 var _view: BlockView
 var _sprite: Sprite2D
@@ -57,7 +50,6 @@ var _over: Node2D
 var _zoom_i := START_ZOOM
 var _pan := Vector2.ZERO
 var _stats: Dictionary = {}
-var _street_spots: Array[Dictionary] = []
 var _lot_count := 0
 var _block: Dictionary = {}
 var _play: OfficePlay
@@ -70,14 +62,9 @@ var _press_ui := false
 # the lot under the pointer and the selected one, -1 for none
 var _hover := -1
 var _picked := -1
-# the street names placed for the view as it is ("zoom|pan" -> labels), and every named
-# street's straight runs in drawing pixels ([short name, a, b]) for the pointer to name one
-var _labels := {}
-var _labels_key := ""
-var _runs_px: Array = []
-# the street under the pointer (HOVER): its short name and where on it the pointer is (screen)
-var _hover_name := ""
-var _hover_at := Vector2.ZERO
+# the clicked street's plate: {"name", "kind", "at" (ground metres on its line), "until" (ms)},
+# empty when none is up
+var street := {}
 var _traffic: Traffic
 # the traffic is paused under a panel
 var _paused := false
@@ -109,15 +96,11 @@ func setup(meta: Dictionary) -> bool:
 	_block = block
 	_view = BlockView.new()
 	_view.live = true
-	_view.names = labels == StreetNames.PAINTED
 	_view.active_radius = game.radius(id)
 	if not _view.set_block(block):
 		return false
 	_stats = block.get("stats", {})
 	_lot_count = block["plots"].size()
-	_street_spots = _view.street_labels()
-	for run: Array in StreetNames.runs(block):
-		_runs_px.append([StreetNames.short(run[0]), _view.project(run[1]), _view.project(run[2])])
 	_play = OfficePlay.new()
 	_play.setup(self, game, id, block)
 	# the office's free lot learns its multipliers from the area (a new office, an old save)
@@ -150,6 +133,9 @@ func _ready() -> void:
 # a full-window panel (bank, office tab) hides the map: the cars wait under it and drive on when
 # it closes
 func _process(_delta: float) -> void:
+	if not street.is_empty() and Time.get_ticks_msec() > int(street["until"]):
+		street = {}
+		_over.queue_redraw()
 	var hidden := _play.panel_kind() != ""
 	if hidden != _paused:
 		_paused = hidden
@@ -211,13 +197,18 @@ func press(at: Vector2) -> bool:
 
 
 func click(at: Vector2) -> void:
+	# any click puts the street plate away; a click on open ground may bring up another
+	street = {}
 	if _play.click(at):
 		_over.queue_redraw()
 		return
 	if Ui.BACK_RECT.has_point(at):
 		back()
 	else:
-		select(lot_under(at))
+		var lot := lot_under(at)
+		select(lot)
+		if lot < 0:
+			name_street(at)
 	_over.queue_redraw()
 	_play.queue_redraw()
 
@@ -307,7 +298,6 @@ func relevel(radius: float) -> void:
 		_next_view.queue_free()
 	var nv := BlockView.new()
 	nv.live = true
-	nv.names = _view.names
 	nv.active_radius = radius
 	if not nv.set_block(_block):
 		return
@@ -383,8 +373,6 @@ func hover(at: Vector2) -> void:
 	hot = at
 	_play.hover(at)
 	_hover = -1 if _play.blocks_map() or on_mark(at) else lot_under(at)
-	if labels != StreetNames.MICRO:
-		_street_under(at)
 	_over.queue_redraw()
 
 
@@ -409,88 +397,26 @@ func _draw() -> void:
 	Ui.backdrop(self)
 
 
-# the street names for the view as it is: each name once, the ones nearest the middle of the
-# view first, none overlapping another or the office's sign, all inside the map (A: along the
-# street, sheared; C: flat plates, a few)
-func _labels_now() -> Array:
-	var key := "%d|%d|%d" % [_zoom_i, roundi(_pan.x), roundi(_pan.y)]
-	if key == _labels_key:
-		return _labels[key]
-	var z := _zoom()
-	var mid := Vector2(Ui.CANVAS.x * 0.5, (MAP_TOP + MAP_BOTTOM) * 0.5)
-	var view := Rect2(8, MAP_TOP + 4, Ui.CANVAS.x - 16, MAP_BOTTOM - MAP_TOP - 8)
-	var spots := _street_spots.duplicate()
-	spots.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-		return (_pan + a["at"] * z).distance_to(mid) < (_pan + b["at"] * z).distance_to(mid))
-	var placed: Array[Rect2] = []
-	if _view.sign_box.size != Vector2.ZERO:
-		placed.append(Rect2(_pan + _view.sign_box.position * z, _view.sign_box.size * z).grow(6.0))
-	var named := {}
-	var out: Array = []
-	for s: Dictionary in spots:
-		if named.has(s["text"]) or s["text"] == "":
-			continue
-		if labels == StreetNames.PLATES and out.size() >= PLATES_MAX:
-			break
-		var w := Ui.micro_width(s["text"])
-		var at: Vector2 = (_pan + s["at"] * z).round()
-		var slope := tan(float(s["angle"]))
-		var boxes: Array[Rect2] = []
-		# where it must find street, not a lot or a building (the pick image)
-		var feet: Array[Vector2] = [at]
-		if labels == StreetNames.PLATES:
-			slope = 0.0
-			boxes.append(Rect2(at - Vector2(w * 0.5 + 6.0, 9.0), Vector2(w + 12.0, 18.0)))
-		else:
-			# a name may overhang its stretch of street a little, not run across the map, and
-			# follows only a street it can lie along
-			if w > float(s["room"]) * z * 1.3 or absf(slope) > SHEAR_MAX:
-				continue
-			for k in 7:
-				var x := (k / 6.0 - 0.5) * w
-				feet.append(at + Vector2(x, x * slope))
-			# a sheared name is a thin slanted band: a few small boxes along it
-			var parts := 5
-			var step := (w + 8.0) / parts
-			for k in parts:
-				var x := -w * 0.5 - 4.0 + step * (k + 0.5)
-				boxes.append(Rect2(at + Vector2(x, x * slope) - Vector2(step * 0.5, 8.0),
-					Vector2(step, 16.0)))
-		var free := true
-		for b in boxes:
-			free = free and view.encloses(b)
-			for q in placed:
-				free = free and not q.intersects(b)
-		# a tree or a roof corner over a bit of it is fine, a building across it is not
-		var off := 0
-		for f in feet:
-			off += 1 if _view.lot_at((f - _pan) / z) >= 0 else 0
-		free = free and off <= feet.size() / 4
-		if free:
-			placed.append_array(boxes)
-			named[s["text"]] = true
-			out.append({"at": at, "slope": slope, "text": s["text"], "w": w})
-	_labels.clear()
-	_labels[key] = out
-	_labels_key = key
-	return out
-
-
-# the named street nearest the pointer, if it is within HOVER_REACH (HOVER)
-func _street_under(at: Vector2) -> void:
-	_hover_name = ""
+# a click on open ground (a street, a pavement, a park): the nearest street's name plate
+func name_street(at: Vector2) -> void:
+	street = {}
 	if not is_drawn() or _play.blocks_map() or at.y < MAP_TOP or at.y > MAP_BOTTOM \
 			or at.x > MAP_RIGHT and at.y < BUTTONS_BOTTOM:
 		return
-	var z := _zoom()
-	var best := HOVER_REACH
-	for run: Array in _runs_px:
-		var q := Geometry2D.get_closest_point_to_segment(at, _pan + run[1] * z, _pan + run[2] * z)
-		var d := q.distance_to(at)
-		if d < best and run[0] != "":
-			best = d
-			_hover_name = run[0]
-			_hover_at = q
+	var hit := StreetNames.nearest(_block, ground_at(at))
+	if hit.is_empty():
+		return
+	var name: String = hit["name"]
+	street = {"name": name if name != "" else "Sin nombre", "kind": StreetNames.kind(hit["road"]),
+		"at": hit["at"], "until": Time.get_ticks_msec() + STREET_SHOW_MS}
+
+
+# the ground point (metres) under a canvas point, on the ground plane
+func ground_at(at: Vector2) -> Vector2:
+	var q := (at - _pan) / _zoom() - _view.project(Vector2.ZERO)
+	var sum := q.x / Iso.S
+	var diff := 2.0 * q.y / Iso.S
+	return Vector2((sum + diff) * 0.5, (sum - diff) * 0.5)
 
 
 func _draw_over() -> void:
@@ -498,7 +424,7 @@ func _draw_over() -> void:
 		Ui.text_in(_over, Rect2(0, 260, 600, 60), "Dibujando el barrio…", Ui.TEXT, Ui.MUTED)
 	else:
 		_draw_outlines()
-		_draw_names()
+		_draw_street()
 	var city := CityDb.get_city(office["city"])
 	Ui.header(_over, office.get("name", "Oficina"), true, hot, TITLE_RIGHT)
 	Ui.text(_over, Vector2(Ui.BACK_RECT.end.x + Ui.HEAD_GAP, 98), "%s · %d / %s tuyos" % [
@@ -526,38 +452,33 @@ func _draw_ring(lot: int, color: Color) -> void:
 			_over.draw_rect(Rect2(_pan + r.position * z, r.size * z), ink)
 
 
-# the street names over the map, as LABEL_STYLE says (PAINTED ones are in the drawing itself)
-func _draw_names() -> void:
-	match labels:
-		StreetNames.MICRO, StreetNames.PLATES:
-			# at x1 the art is half size and the names would bury it
-			if _zoom_i == 0:
-				return
-			var shown := {}
-			for l: Dictionary in _labels_now():
-				shown[l["text"]] = true
-				if labels == StreetNames.PLATES:
-					_plate(l["at"], l["text"])
-					continue
-				# sheared to the street's slope, so the letters keep their vertical strokes
-				var shear := Transform2D(Vector2(1, l["slope"]), Vector2(0, 1), l["at"])
-				_over.draw_set_transform_matrix(shear)
-				Ui.micro(_over, Vector2(-roundf(float(l["w"]) * 0.25) * 2.0, -4), l["text"],
-					Ui.CREAM, 2.0, true)
-				_over.draw_set_transform_matrix(Transform2D.IDENTITY)
-			# the street under the pointer gets its plate too
-			if labels == StreetNames.PLATES and _hover_name != "" and not shown.has(_hover_name):
-				_plate((_hover_at + Vector2(0, -22)).round(), _hover_name)
-		_:
-			# painted names (in the drawing) and the hover look: the street under the pointer
-			if _hover_name != "":
-				_plate((_hover_at + Vector2(0, -22)).round(), _hover_name)
-
-
-# a street-name plate: a dark chip with a thin rim, the name in cream, centred on `at`
-func _plate(at: Vector2, text: String) -> void:
-	var w := Ui.micro_width(text)
-	var r := Rect2((at - Vector2(roundf(w * 0.25) * 2.0 + 6.0, 9.0)).round(), Vector2(w + 12.0, 18.0))
+# the clicked street's plate: its kind in the micro font over its name, on a dark chip just
+# above the spot on the street (below it when there is no room), a short stem down to it
+func _draw_street() -> void:
+	if street.is_empty() or _play.blocks_map():
+		return
+	var foot := (_pan + _view.project(street["at"]) * _zoom()).round()
+	if foot.y < MAP_TOP or foot.y > MAP_BOTTOM:
+		return
+	var name: String = street["name"]
+	var size := Ui.TEXT
+	if Ui.text_width(name, size, Ui.NARROW) > 540.0:
+		name = StreetNames.short(name)
+	var kind := StreetNames.plain(street["kind"])
+	var w := maxf(Ui.text_width(name, size, Ui.NARROW), Ui.micro_width(kind)) + 24.0
+	var h := 50.0
+	var x := clampf(foot.x - w * 0.5, 8.0, Ui.CANVAS.x - 8.0 - w)
+	var y := foot.y - h - 14.0
+	var stem := Rect2(foot.x - 1.0, y + h, 2.0, foot.y - y - h)
+	if y < MAP_TOP:
+		y = foot.y + 14.0
+		stem = Rect2(foot.x - 1.0, foot.y, 2.0, y - foot.y)
+	var r := Rect2(roundf(x), roundf(y), roundf(w), h)
+	_over.draw_rect(stem.grow(1.0), Ui.VOID)
+	_over.draw_rect(stem, Ui.GOLD)
+	_over.draw_rect(Rect2(foot - Vector2(3, 3), Vector2(6, 6)), Ui.VOID)
+	_over.draw_rect(Rect2(foot - Vector2(2, 2), Vector2(4, 4)), Ui.GOLD)
 	Ui.chip(_over, r.grow(2.0), Ui.VOID, Ui.VOID)
 	Ui.chip(_over, r, Ui.PLATE, Ui.RIM_DIM)
-	Ui.micro(_over, r.position + Vector2(6, 4), text, Ui.CREAM)
+	Ui.micro(_over, r.position + Vector2(12, 8), kind, Ui.GOLD)
+	Ui.text(_over, r.position + Vector2(12, 41), name, size, Ui.CREAM, Ui.NARROW, false)
