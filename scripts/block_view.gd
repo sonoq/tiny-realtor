@@ -62,8 +62,6 @@ var build_ms := 0
 var draw_ms := 0
 # keep what a lot redraw needs (the game); off for one-off renders
 var live := false
-# street names painted on the asphalt (StreetNames.PAINTED)
-var names := false
 # the last lot redraw: milliseconds of main-thread work (lay out, sort, record, paste) and wall
 # time until it was on screen, and the size of the rectangle redrawn
 var redraw_ms := 0
@@ -127,7 +125,6 @@ func set_block(block: Dictionary) -> bool:
 	_area = AreaBuilder.new(_iso, block, active_radius)
 	_area.tags = not live
 	_area.people = not live
-	_area.names = names
 	_area.build()
 	_area.objects = DepthSort.order(_area.objects)
 	pops = _area.pops
@@ -429,44 +426,6 @@ func outline(lot: int) -> Array:
 					runs.append(Rect2(box.position.x + start, box.position.y + y, x - start, 1))
 					start = -1
 	_outlines[lot] = out
-	return out
-
-
-# street name labels: for each name, spots along its straight stretches (every 60 m on a long
-# one, so a name shows near the office too, never two of one name closer than 60 m), with the
-# short name (StreetNames.short), the on-screen direction and the room the stretch offers; the
-# caller drops the overlaps
-func street_labels() -> Array[Dictionary]:
-	var out: Array[Dictionary] = []
-	var spots := {}
-	for run: Array in StreetNames.runs(_block):
-		var name: String = run[0]
-		var a: Vector2 = run[1]
-		var b: Vector2 = run[2]
-		var length := a.distance_to(b)
-		if length < 25.0:
-			break
-		var d := project(b) - project(a)
-		var angle := d.angle()
-		if angle > PI * 0.5:
-			angle -= PI
-		elif angle < -PI * 0.5:
-			angle += PI
-		if not spots.has(name):
-			spots[name] = PackedVector2Array()
-		var n := maxi(1, int(length / 60.0))
-		for k in n:
-			var at := a.lerp(b, (k + 0.5) / n)
-			if at.length() > _radius - 15.0:
-				continue
-			var far := true
-			for q: Vector2 in spots[name]:
-				far = far and q.distance_to(at) > 60.0
-			if not far:
-				continue
-			spots[name].append(at)
-			out.append({"text": StreetNames.short(name), "name": name, "at": project(at),
-				"angle": angle, "room": project(a).distance_to(project(b)) / n, "metres": at})
 	return out
 
 
