@@ -5,12 +5,17 @@ extends Node2D
 # between), all input, and the download jobs: an Overpass fetch, then parsing and baking on a
 # worker thread so the window keeps moving, then the save under user:// (see Store).
 # Left-drag on the header bar moves the borderless window; on a map, drag pans. Esc goes back,
-# and quits from the city list.
+# and quits from the city list. It also keeps the player's Game: loaded at start (the time away
+# is paid then), advanced a few times a second whatever the screen, saved every SAVE_EVERY
+# seconds, after every change and on quit; the game opens straight into the last office seen.
 
 # pointer travel (canvas px) before a press counts as a drag rather than a click
 const SLOP := 6.0
+const TICK := 0.25
+const SAVE_EVERY := 30.0
 
 var screen: Screen
+var game: Game
 
 var _net: Overpass
 var _job: Dictionary = {}
@@ -20,6 +25,8 @@ var _moved := false
 var _press_at := Vector2.ZERO
 var _window_drag := false
 var _grab := Vector2i.ZERO
+var _tick := 0.0
+var _save_t := 0.0
 
 
 func _ready() -> void:
@@ -32,6 +39,17 @@ func _ready() -> void:
 	_net.finished.connect(_on_downloaded)
 	_net.failed.connect(_on_failed)
 	add_child(_net)
+	game = Game.new(Game.save_path())
+	game.load_or_new()
+	if not game.away.is_empty():
+		print("App: away %d s, paid %d s, +%s" % [int(game.away["seconds"]),
+			int(game.away["paid_s"]), Economy.money(float(game.away["money"]))])
+	get_tree().set_auto_accept_quit(false)
+	var last: String = game.state.get("last_office", "")
+	for o in Store.offices():
+		if o["id"] == last:
+			open_office(o)
+			return
 	show_cities()
 
 
@@ -68,7 +86,7 @@ func open_city(city_id: String) -> void:
 
 
 func place_office(city_id: String, lat: float, lon: float, place: String) -> void:
-	if Rules.too_close(lat, lon):
+	if Rules.too_close(lat, lon) or game.can_open_office() != "":
 		return
 	_start_job({"kind": "office", "city": city_id, "lat": lat, "lon": lon, "name": place,
 		"title": "Nueva oficina en %s" % place,
@@ -78,7 +96,9 @@ func place_office(city_id: String, lat: float, lon: float, place: String) -> voi
 
 func open_office(meta: Dictionary) -> void:
 	var view := OfficeView.new()
+	view.game = game
 	if view.setup(meta):
+		game.save()
 		_show(view)
 	else:
 		view.free()
@@ -163,7 +183,15 @@ static func _bake(job: Dictionary, body: PackedByteArray) -> Dictionary:
 	return {"data": data}
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_tick += delta
+	_save_t += delta
+	if _tick >= TICK:
+		_tick = 0.0
+		_advance()
+	if _save_t >= SAVE_EVERY:
+		_save_t = 0.0
+		game.save()
 	if _thread != null and not _thread.is_alive():
 		var result: Dictionary = _thread.wait_to_finish()
 		_thread = null
@@ -200,6 +228,10 @@ func _bake_done(result: Dictionary) -> void:
 	}
 	data["office"] = meta
 	var size := Store.write_json(Store.office_path(id), data)
+	# the office is paid for (the first is free) once it is safely on disk
+	game.pay_office()
+	game.add_office(id, data.get("office_plot", ""))
+	game.save()
 	var st: Dictionary = data["stats"]
 	meta["stats"] = {"download_bytes": info["bytes"], "download_ms": info["ms"],
 		"mirror": info.get("mirror", ""), "parse_ms": st["parse_ms"], "bake_ms": st["bake_ms"],
@@ -213,7 +245,35 @@ func _bake_done(result: Dictionary) -> void:
 	open_office(meta)
 
 
+# pays the time since the last tick and tells the office on screen what finished or started
+func _advance() -> void:
+	var done := game.advance(game.now())
+	var view := screen as OfficeView
+	for d in done:
+		if view != null and view.office.get("id") == d["office"]:
+			view.on_built(d["lot"], int(d["tier"]))
+	for s: Dictionary in game.auto_started:
+		if view != null and view.office.get("id") == s["office"]:
+			view.on_started(s["lot"])
+	game.auto_started.clear()
+	if not done.is_empty():
+		game.save()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		if game != null:
+			game.advance(game.now())
+			game.save()
+		get_tree().quit()
+	elif what == NOTIFICATION_WM_MOUSE_EXIT and screen != null:
+		# a widget left alone: no hover tints, no pops
+		screen.hover(Vector2(-100, -100))
+
+
 func _exit_tree() -> void:
+	if game != null:
+		game.save()
 	if _thread != null:
 		_thread.wait_to_finish()
 
@@ -225,6 +285,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		if not screen.back():
+			game.save()
 			get_tree().quit()
 	elif event is InputEventMouseButton:
 		var b := event as InputEventMouseButton

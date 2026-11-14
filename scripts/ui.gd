@@ -274,15 +274,25 @@ static func back_button(c: CanvasItem, hot: Vector2) -> void:
 
 
 # the screen header: the way out (when there is one) and the screen's name beside it
-static func header(c: CanvasItem, title: String, back: bool, hot: Vector2) -> void:
+# (`right`: where the title must end, to leave room for something on the right of the bar)
+static func header(c: CanvasItem, title: String, back: bool, hot: Vector2,
+		right: float = 470.0) -> void:
 	var x := 16.0
 	if back:
 		back_button(c, hot)
 		x = BACK_RECT.end.x + HEAD_GAP
 	var size := BIG
-	if text_width(title, BIG) > 470.0 - x:
+	var kind := BOLD
+	if text_width(title, BIG) > right - x:
 		size = TEXT
-	text(c, Vector2(x, BACK_RECT.get_center().y + cap_h(size) * 0.5), title, size, CREAM)
+	if text_width(title, size) > right - x:
+		kind = NARROW
+	var line := title
+	var cut := title.length()
+	while cut > 3 and text_width(line, size, kind) > right - x:
+		cut -= 1
+		line = title.left(cut).strip_edges() + "…"
+	text(c, Vector2(x, BACK_RECT.get_center().y + cap_h(size) * 0.5), line, size, CREAM, kind)
 
 
 # the dark slate checker every screen stands on (Battlegrounds' backdrop, the mockup's 38 px x2)
