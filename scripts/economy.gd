@@ -126,7 +126,11 @@ const EVENT_LIFE: Array[float] = [60.0, 120.0]
 const EVENT_RETRY := 30.0
 const EVENT_HOUR_CAP := 20.0
 # a new game's bucket: the first minutes grow fastest, so they start with little in it
-const EVENT_START := 2.0
+const EVENT_START := 6.0
+# and no single reward is worth more than this share of all you have earned so far: in the first
+# hour a few minutes of income are a big part of everything you have and would skip the game
+# ahead; later this never binds
+const EVENT_EARLY := 0.2
 # how often each kind is picked among the ones that make sense now
 const EVENT_WEIGHT := {"sale": 3.0, "express": 2.0, "vip": 2.0, "buyer": 1.0, "job": 4.0}
 # "Solar en oferta": a lot for sale in the radius at a discount for the event's life; worth at

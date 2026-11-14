@@ -524,8 +524,10 @@ func _built_game() -> Game:
 	_play(g, Economy.BUILD_TIME[1] + 1.0)
 	g.build(OFFICE, solar["id"])
 	_play(g, Economy.BUILD_TIME[1] + 1.0)
-	# an hour into the game: the events' bucket is full
+	# as an hour into the game: the events' bucket is full and enough earned that the opening's
+	# cap (EVENT_EARLY) does not bind
 	Events.of(g)["budget"] = Economy.EVENT_HOUR_CAP
+	g.state["stats"]["earned"] = 1e9
 	return g
 
 
@@ -549,6 +551,17 @@ func _events_spawn() -> void:
 	_check(float(e["wait"]) == Economy.EVENT_WAIT[0], "the first event comes after a minute")
 	_check(float(Events.of(_new_game())["budget"]) == Economy.EVENT_START,
 		"a new game starts with a small bucket")
+	# in the opening no reward is worth more than a share of all earned so far
+	var young := _new_game()
+	young.build(OFFICE, _block["office_plot"])
+	_play(young, Economy.BUILD_TIME[1] + 1.0)
+	Events.of(young)["budget"] = Economy.EVENT_HOUR_CAP
+	var yj := Events.spawn(young, OFFICE, _infos, "job")
+	var room := Economy.EVENT_EARLY * (float(young.state["stats"]["earned"])
+		+ Economy.START_MONEY)
+	_check(yj.is_empty() or Events.reward(young, yj) <= room * 1.0001,
+		"an opening reward is at most EVENT_EARLY of all earned: %s <= %s" % [
+		Economy.money(Events.reward(young, yj)) if not yj.is_empty() else "-", Economy.money(room)])
 	# looking away: nothing comes, however long
 	_check(_ev_play(g, 600.0, false, 30.0).is_empty(), "no event while the player is away")
 	_check(Events.pending(g, OFFICE).is_empty(), "nothing waits after time away with none")
@@ -622,6 +635,7 @@ func _events_offers() -> void:
 	# a solar's discount is minutes of its small income)
 	var g := _new_game()
 	Events.of(g)["budget"] = Economy.EVENT_HOUR_CAP
+	g.state["stats"]["earned"] = 1e6
 	g.state["money"] = 1e6
 	var full := {}
 	for info in _infos:

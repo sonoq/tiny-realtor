@@ -144,7 +144,8 @@ static func spawn(g: Game, id: String, infos: Array[Dictionary], kind: String = 
 static func _make(g: Game, id: String, infos: Array[Dictionary], kind: String,
 		rng: RandomNumberGenerator) -> Dictionary:
 	var inc := g.income()
-	var budget := float(of(g)["budget"])
+	# what a reward may be worth now, in minutes: the bucket, and the share of all earned so far
+	var budget := minf(float(of(g)["budget"]), early_cap(g))
 	var lots: Dictionary = g.office(id).get("lots", {})
 	match kind:
 		"sale":
@@ -222,6 +223,13 @@ static func _make(g: Game, id: String, infos: Array[Dictionary], kind: String,
 			return {"lot": built[rng.randi() % built.size()], "minutes": m,
 				"game": games[rng.randi() % games.size()]}
 	return {}
+
+
+# the most one reward may be worth now in minutes of income: EVENT_EARLY of all the game has
+# earned so far (the start money included)
+static func early_cap(g: Game) -> float:
+	var earned := float(g.state.get("stats", {}).get("earned", 0.0)) + Economy.START_MONEY
+	return Economy.EVENT_EARLY * earned / maxf(g.income(), 1.0)
 
 
 # owned lots with a building and no works, where a tenant lives
