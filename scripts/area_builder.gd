@@ -66,6 +66,8 @@ var lot_ground: Array = []
 var lot_shadows: Array = []
 # price tags over the signed lots nearest the office; the game draws its own, live
 var tags := true
+# people standing on the pavements; the game has them walking instead (Walkers)
+var people := true
 # where income pops rise from: over the roofs of what the player owns
 var pops: Array[Vector2] = []
 # one entry per lot (index = the file's plots[] index): "data" (the plot), "poly" (ground
@@ -1256,7 +1258,7 @@ func _street_furniture() -> void:
 				_close(0.0))
 		_along(poly, 1.0, 11.0, 4.0, func(q: Vector2, k: int) -> void:
 			var seed := "%s_%d" % [bid, k]
-			if q.length() < active and Iso.h01(seed + "ped") < 0.4:
+			if people and q.length() < active and Iso.h01(seed + "ped") < 0.4:
 				var at := q + Vector2(Iso.h01(seed + "jx") - 0.5, Iso.h01(seed + "jy") - 0.5) * 2.0
 				_object("ped", Iso.square(at, 0.3), false, false)
 				_pt.tex("ped:%d" % int(Iso.h01(seed + "sh") * 6.0), iso.pv(at))

@@ -120,6 +120,7 @@ func set_block(block: Dictionary) -> bool:
 	focus = _iso.p(0.0, 0.0)
 	_area = AreaBuilder.new(_iso, block, active_radius)
 	_area.tags = not live
+	_area.people = not live
 	_area.build()
 	_area.objects = DepthSort.order(_area.objects)
 	pops = _area.pops
