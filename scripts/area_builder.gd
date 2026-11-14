@@ -30,8 +30,6 @@ const FACADES: Array[String] = ["CRM", "OCH", "SAL", "STN", "CRM", "OCH"]
 const TAGS := 5
 # placeholder asking price per square metre, until the game has an economy
 const PRICE_M2 := 300.0
-# the torres / rascacielos layout (Skyline: CLUSTER A, BRIDGES B, MEGA C, RING D); Oscar's pick
-const SKYLINE_STYLE := Skyline.BRIDGES
 const STREET_TREE_EVERY := 9.0
 const LAMP_EVERY := 17.0
 const DASH_CLEAR := 14.0
@@ -48,7 +46,6 @@ const SHED_DEPTH := Vector2(22, 30)
 const SHED_FRONT := Vector2(18, 30)
 # garden and plaza trees: one per this many square metres
 const GARDEN_TREE := 70.0
-const PLAZA_TREE := 120.0
 # street trees, lamps and people keep this far (m) from the office's pin
 const MARK_CLEAR := 4.5
 
@@ -88,8 +85,8 @@ var keep_clear: Array[Rect2] = []
 # the office's marker: its ground point (metres) and the pin's box in the drawing
 var mark := Vector2.ZERO
 var mark_box := Rect2()
-# the layout in use; tools that compare the variants switch it
-static var skyline: int = SKYLINE_STYLE
+# the torres / rascacielos archetype: every lot its own (Skyline.MIX); tools may force one
+static var skyline: int = Skyline.MIX
 
 
 func _init(camera: Iso, block: Dictionary, active_radius: float) -> void:
@@ -510,7 +507,7 @@ func _develop(plot: Dictionary, poly: PackedVector2Array) -> void:
 			var built := _apartments(plot, poly, owned)
 			_scatter(poly, id + "g", GARDEN_TREE, built)
 		_:
-			_scatter(poly, id + "p", PLAZA_TREE, _skyline(plot, poly, tier, levels, owned))
+			_skyline(plot, poly, tier, levels, owned)
 
 
 # --- building sites ------------------------------------------------------------------------------
@@ -548,7 +545,8 @@ func _works(plot: Dictionary, poly: PackedVector2Array, to: int) -> void:
 	# torres and rascacielos: the floors of each building the lot's plan will stand
 	var goals: Array[float] = []
 	if to >= 4:
-		for w: Array in Skyline.plan(skyline, to, poly, lv, id)["works"]:
+		for w: Array in Skyline.plan(to, poly, lv, id, PackedInt32Array(plot.get("fronts", [])),
+				plot.get("corner", false), skyline)["works"]:
 			feet.append(Iso.offset(w[0], -0.6))
 			goals.append(w[1])
 	var con := Pal.ramp_of("CON")
@@ -673,9 +671,9 @@ func _facade(key: String) -> int:
 	return Pal.ramp_of(FACADES[int(Iso.h01(key + "fac") * FACADES.size())])
 
 
-# a paved plaza with a planted border
-func _plaza(poly: PackedVector2Array, id: String) -> void:
-	_g_poly(poly, "PAVE_L")
+# a paved plaza (or a lawn) with a planted border
+func _plaza(poly: PackedVector2Array, id: String, ground: String = "PAVE_L") -> void:
+	_g_poly(poly, ground)
 	var ring := Iso.clean(poly)
 	for i in ring.size():
 		var a := ring[i]
@@ -890,14 +888,15 @@ func _pool(id: String, poly: PackedVector2Array, rect: PackedVector2Array) -> vo
 			_g_poly(deep, "CYAN")
 
 
-# a torres or rascacielos lot as Skyline plans it, on a plaza: each group of buildings one
-# object, each mass in it ringed in ink on its own (towers sharing a podium still read apart);
-# returns the footprints the plaza's trees keep off
+# a torres or rascacielos lot as Skyline plans it (its own archetype and materials), on its
+# ground with gardens and pools: each group of buildings one object, each mass in it ringed in ink
+# on its own (towers sharing a podium still read apart); trees on what is left open
 func _skyline(plot: Dictionary, poly: PackedVector2Array, tier: int, levels: int,
-		owned: bool) -> Array[PackedVector2Array]:
+		owned: bool) -> void:
 	var id: String = plot["id"]
-	var plan := Skyline.plan(skyline, tier, poly, levels, id)
-	_plaza(poly, id)
+	var plan := Skyline.plan(tier, poly, levels, id, PackedInt32Array(plot.get("fronts", [])),
+		plot.get("corner", false), skyline)
+	_plaza(poly, id, plan["base"])
 	for g: Array in plan["ground"]:
 		if (g[0] as PackedVector2Array).size() >= 3:
 			_g_poly(Iso.clean(g[0]), g[1])
@@ -919,39 +918,53 @@ func _skyline(plot: Dictionary, poly: PackedVector2Array, tier: int, levels: int
 	tallest = maxf(tallest, top_z + 20.0)
 	var built: Array[PackedVector2Array] = []
 	built.assign(plan["built"])
-	return built
+	_scatter(poly, id + "p", plan["trees"], built)
 
 
-# one piece of a Skyline mass
+# one piece of a Skyline building
 func _piece(id: String, p: Dictionary, owned: bool) -> void:
 	var foot: PackedVector2Array = p.get("foot", PackedVector2Array())
 	var z0: float = p.get("z0", 0.0)
 	var z1: float = p.get("z1", 0.0)
-	var con := Pal.ramp_of("CON")
-	var roof := Pal.ramp_of("TEAL") if owned else con
 	match int(p["look"]):
-		Skyline.TOWER:
-			_pt.prism(foot, z0, z1, WorldShader.STYLE_TOWER, con, roof, true,
-				0 if p.get("lobby", false) else 1, z0 == 0.0)
-			if p.get("props", false):
-				_roof_props(id, foot, z1, owned, true)
-		Skyline.GLASS:
-			var v := (1 if p.get("lobby", false) else 0) | (int(p.get("crown", 0)) << 1)
-			# a crown's roof is glass unless the player owns it (teal, like every owned roof)
-			var top := roof
-			if int(p.get("crown", 0)) == 2 and not owned:
-				top = Pal.ramp_of("GLS")
-			_pt.prism(foot, z0, z1, WorldShader.STYLE_SKY, 0, top, true, v, z0 == 0.0)
-		Skyline.PODIUM:
-			_pt.prism(foot, z0, z1, WorldShader.STYLE_TOWER, con, roof, true, 0, true)
+		Skyline.BOX:
+			var roof: int = p.get("roof", -1)
+			if owned and p.get("top", false):
+				roof = Pal.ramp_of("TEAL")
+			_pt.prism(foot, z0, z1, p["style"], p["ramp"], roof, p.get("rim", true),
+				p.get("variant", 0), z0 == 0.0)
+		Skyline.HIP:
+			_pt.pitched(foot, z0, z1, p["ramp"], p["roof"], p["rh"], 0.45,
+				WorldShader.STYLE_PLAIN)
 		Skyline.BRIDGE:
-			_pt.prism(foot, z0, z1, WorldShader.STYLE_SKY, 0, Pal.ramp_of("GLS"), false, 2 << 1,
-				false)
+			_pt.prism(foot, z0, z1, WorldShader.STYLE_SKY, p["ramp"], Pal.ramp_of("GLS"), false,
+				2 << 1, false)
 		Skyline.LAWN:
+			var deck: bool = p.get("deck", false)
 			_pt.flat(foot, z1, Pal.i("GRASS"))
-			var hedge := Iso.offset(foot, -0.7)
+			var hedge := Iso.offset(foot, -0.9 if deck else -0.7)
 			if hedge.size() >= 3:
-				_pt.flat(hedge, z1, Pal.i("GRASS_L"))
+				_pt.flat(hedge, z1, Pal.i("PAVE_L" if deck else "GRASS_L"))
+		Skyline.POOL:
+			_pt.flat(foot, z1, Pal.i("CREAM"))
+			var water := Iso.offset(foot, -0.6)
+			if water.size() >= 3:
+				_pt.flat(water, z1, Pal.i("CYAN_M"))
+				var deep := Iso.offset(water, -0.7)
+				if deep.size() >= 3:
+					_pt.flat(deep, z1, Pal.i("CYAN"))
+		Skyline.SOLAR:
+			_solar(foot, z1)
+		Skyline.SIGN:
+			_sign(p)
+		Skyline.ANTENNA:
+			var tip := iso.pv(p["at"], p["z"])
+			var n := int(p["len"])
+			for k in n:
+				_pt.dot(tip + Vector2(0, -k), Pal.i("SL5") if k % 2 else Pal.i("SL3"))
+			_pt.dot(tip + Vector2(-1, -n + 2), Pal.i("SL3"))
+			_pt.dot(tip + Vector2(1, -n + 2), Pal.i("SL3"))
+			_pt.dot(tip + Vector2(0, -n), Pal.i("RED"))
 		Skyline.TREE:
 			var at: Vector2 = p["at"]
 			_pt.tex("tree:%d:small" % int(Iso.h01(id + str(at)) * 4.0), iso.pv(at, p["z"]))
@@ -969,6 +982,44 @@ func _piece(id: String, p: Dictionary, owned: bool) -> void:
 			if q.x + q.y < far.x + far.y:
 				far = q
 		_pt.tex("flag:6:cyan", iso.pv(far, z1) + Vector2(1, 1))
+
+
+# rows of solar panels on a flat roof, along its long side
+func _solar(roof: PackedVector2Array, z: float) -> void:
+	var rect := Iso.min_rect(roof, 0.86)
+	if rect.size() < 4:
+		return
+	var e := rect[1] - rect[0]
+	var f := rect[3] - rect[0]
+	var rows := int(f.length() / 1.7)
+	for j in rows:
+		var a := rect[0] + f * ((j * 1.7 + 0.3) / f.length())
+		var b := a + f.normalized() * 0.9
+		var strip := Iso.clean(PackedVector2Array([a, a + e, b + e, b]))
+		if Iso.contains(roof, strip):
+			_pt.flat(strip, z, Pal.i("GLS3"))
+
+
+# a rooftop billboard on two legs, a few letters on its face
+func _sign(p: Dictionary) -> void:
+	var a: Vector2 = p["a"]
+	var b: Vector2 = p["b"]
+	var z: float = p["z"]
+	for q: Vector2 in [a, b]:
+		var foot := iso.pv(q, z)
+		_pt.block(Rect2(foot + Vector2(0, -2), Vector2(1, 3)), Pal.i("SL2"))
+	var nrm := Vector2(-(b.y - a.y), -(b.x - a.x)).normalized()
+	if nrm.x + nrm.y < 0.0:
+		nrm = -nrm
+	var k := maxi(1, Iso.shade(Vector3(nrm.x, nrm.y, 0.0)))
+	var tint := int(p["tint"])
+	_pt.wall(a, b, z + 2.0, z + 7.0, WorldShader.STYLE_PLAIN, k, Pal.car_ramp(tint))
+	var ink := Pal.i("INK") if tint in [1, 3] else Pal.i("CREAM")
+	var n := int(a.distance_to(b) * 1.2)
+	for j in range(1, n - 1):
+		if Iso.h01(str(a) + "l%d" % j) < 0.3:
+			continue
+		_pt.dot(iso.pv(a.lerp(b, float(j) / n), z + 4.0), ink)
 
 
 # a helipad on a flat roof: a dark disc, a gold ring and a cream H

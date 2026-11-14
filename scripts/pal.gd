@@ -36,6 +36,12 @@ const HEX: Array[String] = [
 const RAMPS: Array[String] = ["CRM", "OCH", "SAL", "STN", "TER", "TIL", "TEAL", "GLS", "CON"]
 # car bodies: each tint makes a ramp of its own, lighter and darker by the mockup's factors
 const CAR_TINTS: Array[String] = ["RED", "CREAM", "CYAN_M", "GOLD", "SL5", "SL1"]
+# more ramps made of palette colours (hi, lit, mid, dark), after the car tints so those keep their
+# numbers: gold trim, dark steel, and cyan, green and bronze glass for the top tiers
+const EXTRA: Array[String] = ["GLD", "STL", "CYN", "GRN", "BRZ"]
+const _EXTRA_OF := {"GLD": ["GOLD", "GOLD", "GOLD_M", "GOLD_D"], "STL": ["SL4", "SL3", "SL2", "SL1"],
+	"CYN": ["CYAN", "CYAN_M", "CYAN_D", "CYAN_DD"], "GRN": ["TEAL0", "MINT", "GRASS_D", "GRASS_DD"],
+	"BRZ": ["GOLD_M", "OCH2", "OCH3", "TRUNK"]}
 # rows of the lookup texture: colour, shadow index, dim index, fade index, ramps
 const ROW_COLOR := 0
 const ROW_SHADOW := 1
@@ -69,6 +75,9 @@ static func _ensure() -> void:
 			ramp.append(_nearest(Vector3(mini(255, int(b.x * f)), mini(255, int(b.y * f)),
 				mini(255, int(b.z * f))), []))
 		_ramps.append(ramp)
+	for e in EXTRA:
+		var names: Array = _EXTRA_OF[e]
+		_ramps.append(PackedInt32Array([i(names[0]), i(names[1]), i(names[2]), i(names[3])]))
 	_build_remaps()
 
 
@@ -112,7 +121,10 @@ static func ramp(n: int) -> PackedInt32Array:
 
 
 static func ramp_of(prefix: String) -> int:
-	return RAMPS.find(prefix)
+	var k := RAMPS.find(prefix)
+	if k < 0 and EXTRA.has(prefix):
+		return RAMPS.size() + CAR_TINTS.size() + EXTRA.find(prefix)
+	return k
 
 
 static func car_ramp(tint: int) -> int:

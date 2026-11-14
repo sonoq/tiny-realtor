@@ -31,6 +31,8 @@ const STYLE_SCAFFOLD := 9
 const STYLE_SLAB := 10
 const STYLE_CAB := 11
 const STYLE_SHED := 12
+const STYLE_RIBBON := 13
+const STYLE_GRID := 14
 
 const _COMMON := """
 uint hsh(uint x) {
@@ -60,10 +62,20 @@ const int ST_SCAF = 9;
 const int ST_SLAB = 10;
 const int ST_CAB = 11;
 const int ST_SHED = 12;
+const int ST_RIBBON = 13;
+const int ST_GRID = 14;
 
 int rp(int ramp, int s) { return pal_at(ramp * 4 + clamp(s, 0, 3), 4); }
 
 int gls(int s) { return rp(R_GLS, s); }
+
+// the glass a concrete facade's windows take, by its variant's two upper bits
+int glass_of(int sel) {
+	if (sel == 1) return R_TEAL;
+	if (sel == 2) return R_STL;
+	if (sel == 3) return R_BRZ;
+	return R_GLS;
+}
 
 int win_glass(int k, bool top, bool lit) {
 	if (lit) return top ? GOLD : GOLD_M;
@@ -145,27 +157,28 @@ int house(int i, int r, int n, int k, int ramp, bool door) {
 	return wall;
 }
 
-int tower(int i, int r, int h, int k, int ramp, int ground) {
+int tower(int i, int r, int h, int k, int ramp, int ground, int gr) {
 	int con = rp(ramp, k);
 	if (r >= h - 2) return rp(ramp, k - 1);
 	if (r < ground) {
 		if (r == ground - 1) return con;
 		if (i % 5 == 0) return rp(ramp, k + 1);
 		if (r == 0) return SL1;
-		if (r == 3) return k == 1 ? GLS1 : GLS2;
-		return k == 1 ? GLS2 : GLS3;
+		if (r == 3) return rp(gr, k == 1 ? 1 : 2);
+		return rp(gr, k == 1 ? 2 : 3);
 	}
 	int fr = (r - ground) % 3;
 	if (fr == 0) return con;
 	if (i % 5 == 0) return rp(ramp, k + 1);
 	bool refl = (i + r) % 13 < 2;
-	int g = refl ? gls(k - 1) : gls(k);
-	if (fr == 2 && k == 1 && !refl) return GLS1;
+	int g = refl ? rp(gr, k - 1) : rp(gr, k);
+	if (fr == 2 && k == 1 && !refl) return rp(gr, 1);
 	if (fr == 2) return g;
-	return refl ? g : gls(k + 1);
+	return refl ? g : rp(gr, k + 1);
 }
 
-int sky(int i, int r, int h, int k, int ground, int crown) {
+// a curtain wall in glass ramp `gr`: a glazed lobby, mullions, a crown of gold bands
+int sky(int i, int r, int h, int k, int ground, int crown, int gr) {
 	if (crown > 0 && r >= h - crown) {
 		if (r == h - 1 || r == h - crown) return gold_lit(k);
 		return k <= 1 ? GOLD_M : (k == 2 ? GOLD_D : INK);
@@ -174,14 +187,69 @@ int sky(int i, int r, int h, int k, int ground, int crown) {
 		if (r == ground - 1) return gold_lit(k);
 		if (i % 6 == 0) return k == 1 ? CON2 : CON3;
 		if (r == 0) return SL1;
-		if (k == 1 && r == ground - 2) return GLS1;
-		return k == 3 ? GLS3 : GLS2;
+		if (k == 1 && r == ground - 2) return rp(gr, 1);
+		return rp(gr, k == 3 ? 3 : 2);
 	}
 	int rr = r - ground;
 	bool refl = ((i * 2 + rr) % 29) < 4;
-	int g = refl ? gls(k - 1) : gls(k);
-	if (i % 3 == 0 || rr % 3 == 0) return refl ? gls(k) : gls(k + 1);
+	int g = refl ? rp(gr, k - 1) : rp(gr, k);
+	if (i % 3 == 0 || rr % 3 == 0) return refl ? rp(gr, k) : rp(gr, k + 1);
 	return g;
+}
+
+// an office slab: bands of wall (ramp) and of glass (gr) a storey apart, mullions every 6 columns,
+// a glazed lobby when `lobby`
+int ribbon(int i, int r, int h, int k, int ramp, int gr, bool lobby) {
+	int wall = rp(ramp, k);
+	if (r >= h - 1) return rp(ramp, k - 1);
+	int ground = lobby ? 5 : 0;
+	if (r < ground) {
+		if (r == ground - 1) return rp(ramp, k + 1);
+		if (i % 4 == 0) return rp(ramp, k + 1);
+		if (r == 0) return SL1;
+		return rp(gr, k == 1 ? 1 : 2);
+	}
+	int fr = (r - ground) % 4;
+	if (fr == 0) return rp(ramp, k + 1);
+	if (fr == 1) return wall;
+	if (i % 6 == 0) return wall;
+	bool refl = ((i + r * 2) % 17) < 3;
+	if (fr == 3) return rp(gr, refl ? k - 1 : k);
+	return rp(gr, refl ? k : k + 1);
+}
+
+// a residential or hotel tower: punched windows (kind 0 dark, 1 glazed), balconies with a light
+// rail on every storey (2), or vertical fins (3); a shop front when `lobby`
+int grid(int i, int r, int h, int k, int ramp, int kind, bool lobby, int seed) {
+	int wall = rp(ramp, k);
+	if (r >= h - 1) return rp(ramp, k - 1);
+	if (r == h - 2) return rp(ramp, k + 1);
+	int ground = lobby ? 5 : 0;
+	if (r < ground) {
+		if (r == ground - 1) return rp(ramp, k + 1);
+		if (i % 5 == 0) return wall;
+		if (r == 0) return SL1;
+		return k == 1 ? SL3 : SL2;
+	}
+	int rr = r - ground;
+	int fr = rr % 3;
+	int b = i % 3;
+	bool lit = h01(seed, i / 3, rr / 3, 5) > 0.92;
+	if (kind == 3) {
+		if (b == 0) return rp(ramp, k - 1);
+		if (fr == 0) return rp(ramp, k + 1);
+		return win_glass(k, fr == 2, lit);
+	}
+	if (kind == 2) {
+		if (fr == 0) return k == 1 ? CREAM : rp(ramp, k - 1);
+		if (b == 0) return wall;
+		return gls(fr == 2 ? k : k + 1);
+	}
+	if (b == 1 && fr >= 1) {
+		if (kind == 1) return gls(fr == 2 ? k - 1 : k);
+		return win_glass(k, fr == 2, lit);
+	}
+	return wall;
 }
 
 int plain(int i, int r, int n, int h, int k, int ramp, bool door) {
@@ -242,11 +310,15 @@ int paint(int style, int i, int r, int n, int h, int k, int ramp, int variant, i
 	if (style == ST_APT) return apartment(i, r, h, k, ramp, seed);
 	if (style == ST_OFFICE) return office(i, r, h, k, ramp, seed);
 	if (style == ST_HOUSE) return house(i, r, n, k, ramp, door);
-	if (style == ST_TOWER) return tower(i, r, h, k, ramp, variant == 1 ? 0 : 5);
+	if (style == ST_TOWER)
+		return tower(i, r, h, k, ramp, (variant & 1) == 1 ? 0 : 5, glass_of(variant >> 1));
 	if (style == ST_SKY) {
 		int crown = (variant >> 1) == 1 ? 3 : ((variant >> 1) == 2 ? 4 : 0);
-		return sky(i, r, h, k, (variant & 1) == 1 ? 6 : 0, crown);
+		return sky(i, r, h, k, (variant & 1) == 1 ? 6 : 0, crown, ramp);
 	}
+	if (style == ST_RIBBON)
+		return ribbon(i, r, h, k, ramp, glass_of(variant >> 1), (variant & 1) == 1);
+	if (style == ST_GRID) return grid(i, r, h, k, ramp, variant >> 1, (variant & 1) == 1, seed);
 	if (style == ST_PLAIN) return plain(i, r, n, h, k, ramp, door);
 	if (style == ST_SKEL) return skeleton(i, r, n, h, k);
 	if (style == ST_SCAF) return scaffold(i, r, h, k);
@@ -358,6 +430,8 @@ static func _header() -> String:
 	var out := "uniform sampler2D lut : filter_nearest;\n" + Pal.shader_consts()
 	out += "const int R_GLS = %d;\nconst int R_CON = %d;\n" % [Pal.ramp_of("GLS"),
 		Pal.ramp_of("CON")]
+	out += "const int R_TEAL = %d;\nconst int R_STL = %d;\nconst int R_BRZ = %d;\n" % [
+		Pal.ramp_of("TEAL"), Pal.ramp_of("STL"), Pal.ramp_of("BRZ")]
 	# the awnings in shade: the mockup darkens them to 78% and the palette snaps them
 	var awn: Array[String] = ["RED", "CYAN_M", "GRASS_D", "GOLD_M"]
 	for k in awn.size():
