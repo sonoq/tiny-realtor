@@ -1,9 +1,11 @@
 class_name CityPick
 extends Screen
 
-# The first screen: the shipped list of cities, twelve a page in two columns with < > arrows.
-# Clicking a city opens its map (downloading it the first time). Cities where the player already
-# has offices show how many on a gold badge; cities whose map is saved say so.
+# The shipped list of cities, twelve a page in two columns with < > arrows: the plain way in for
+# anyone who would rather read than look for a dot (the world map's list button; back or Esc
+# return to the world map). Clicking a city opens its map (downloading it the first time).
+# Cities where the player already has offices show how many on a gold badge; cities whose map is
+# saved say so.
 
 const COLS := 2
 const ROWS := 6
@@ -37,10 +39,14 @@ func _city_at(at: Vector2) -> Dictionary:
 
 
 func press(at: Vector2) -> bool:
-	return not _city_at(at).is_empty() or PREV.has_point(at) or NEXT.has_point(at)
+	return not _city_at(at).is_empty() or PREV.has_point(at) or NEXT.has_point(at) \
+		or Ui.BACK_RECT.has_point(at)
 
 
 func click(at: Vector2) -> void:
+	if Ui.BACK_RECT.has_point(at):
+		back()
+		return
 	if PREV.has_point(at) and _page > 0:
 		_page -= 1
 	elif NEXT.has_point(at) and _page < _pages() - 1:
@@ -56,6 +62,11 @@ func click(at: Vector2) -> void:
 func wheel(_at: Vector2, steps: int) -> void:
 	_page = clampi(_page - steps, 0, _pages() - 1)
 	queue_redraw()
+
+
+func back() -> bool:
+	app.show_world()
+	return true
 
 
 func _draw() -> void:
@@ -88,7 +99,7 @@ func _draw() -> void:
 	Ui.arrow(self, NEXT, ">", hot, _page >= _pages() - 1)
 	Ui.text_in(self, Rect2(PREV.end.x, PREV.position.y, NEXT.position.x - PREV.end.x,
 		PREV.size.y), "Página %d / %d" % [_page + 1, _pages()], Ui.TEXT, Ui.MUTED)
-	Ui.header(self, "Tiny Realtor", false, hot)
+	Ui.header(self, "Ciudades", true, hot)
 	if total > 0:
 		var s := "%d oficina%s" % [total, "" if total == 1 else "s"]
 		Ui.coin(self, Vector2(588 - Ui.text_width(s, Ui.TEXT) - 22, 34))

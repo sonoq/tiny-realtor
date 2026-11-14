@@ -102,7 +102,7 @@ func _init() -> void:
 		walkers.count, traffic.count, walkers.crossed - crossed])
 	var atlas := WalkerSprites.image.duplicate() as Image
 	var shown := Image.create(atlas.get_width(), atlas.get_height(), false, Image.FORMAT_RGBA8)
-	shown.fill(Pal.c("PAVE"))
+	shown.fill(Pal.color(Pal.ground("PAVE")))
 	for y in atlas.get_height():
 		for x in atlas.get_width():
 			var c := atlas.get_pixel(x, y)

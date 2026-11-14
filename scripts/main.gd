@@ -1,13 +1,15 @@
 class_name App
 extends Node2D
 
-# Root of main.tscn. Owns the screens (city list -> city map -> office view, with a loading screen
-# between), all input, and the download jobs: an Overpass fetch, then parsing and baking on a
-# worker thread so the window keeps moving, then the save under user:// (see Store).
-# Left-drag on the header bar moves the borderless window; on a map, drag pans. Esc goes back,
-# and quits from the city list. It also keeps the player's Game: loaded at start (the time away
-# is paid then), advanced a few times a second whatever the screen, saved every SAVE_EVERY
-# seconds, after every change and on quit; the game opens straight into the last office seen.
+# Root of main.tscn. Owns the screens (world map -> city map -> office view, with a loading
+# screen between; the plain city list hangs off the world map), all input, and the download
+# jobs: an Overpass fetch, then parsing and baking on a worker thread so the window keeps moving,
+# then the save under user:// (see Store). Left-drag on the header bar moves the borderless
+# window; on a map, drag pans. Esc goes back (office -> its city's map -> the world map, centred
+# on that city), and quits from the world map. It also keeps the player's Game: loaded at start
+# (the time away is paid then), advanced a few times a second whatever the screen, saved every
+# SAVE_EVERY seconds, after every change and on quit; the game opens straight into the last
+# office seen.
 
 # pointer travel (canvas px) before a press counts as a drag rather than a click
 const SLOP := 6.0
@@ -60,7 +62,7 @@ func _ready() -> void:
 		if o["id"] == last:
 			open_office(o)
 			return
-	show_cities()
+	show_world()
 
 
 # --- navigation --------------------------------------------------------------------------------
@@ -72,6 +74,15 @@ func _show(next: Screen) -> void:
 	screen.app = self
 	add_child(screen)
 	screen.hover(get_viewport().get_mouse_position())
+
+
+# the world map; `focus` (a city id) centres it on the city the player comes back from
+func show_world(focus: String = "") -> void:
+	var world := WorldMap.new()
+	_show(world)
+	if focus != "":
+		world.focus(focus)
+		world.hover(get_viewport().get_mouse_position())
 
 
 func show_cities() -> void:
@@ -151,7 +162,7 @@ func cancel_job() -> void:
 			game.save()
 		open_city(job["city"])
 	else:
-		show_cities()
+		show_world(job.get("city", ""))
 
 
 func _on_status(text: String) -> void:

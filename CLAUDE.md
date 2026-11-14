@@ -10,7 +10,8 @@ made by the game, drawn as procedural isometric pixel art made with maths.
 - Window: 600x600 logical canvas, borderless, always on top, not resizable, stretch mode
   `canvas_items`, nearest texture filter, max 60 fps.
 - Main scene `res://main.tscn` (one node running `scripts/main.gd`).
-- **Current state: first gameplay loop.** Pick a city, see its real map, place offices
+- **Current state: first gameplay loop.** Start on the world map, pick a city, see its real
+  map, place offices
   (download and bake each office's area once from OpenStreetMap), and play in the office view:
   rent per minute (offline too, capped), buy lots in the office's radius, build tiers (works with
   scaffolding and cranes), the office tab (the office is a business, not a building: level up
@@ -27,8 +28,8 @@ made by the game, drawn as procedural isometric pixel art made with maths.
 
 Full text, in Spanish, in `docs/DESIGN.md` (it wins over the older `docs/FEASIBILITY.md`).
 
-- World map (pixel art from Natural Earth coastlines, later) -> pick a city from a shipped
-  GeoNames list (no live geocoding: Nominatim forbids autocomplete) -> city map (neighbourhood
+- World map (pixel art from Natural Earth's public-domain coastlines, the first screen) -> pick
+  a city from a shipped list (later GeoNames) (no live geocoding: Nominatim forbids autocomplete) -> city map (neighbourhood
   names + main avenues from Overpass, 3-5 MB raw once per city, ~150-250 KB saved) -> click to
   place an office.
 - **You build; you never buy real buildings.** Placing an office downloads, ONCE, within its max
@@ -62,7 +63,9 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
 **Root and screens**
 - `scripts/main.gd` (`App`) - root of `main.tscn`. Owns the current `Screen`, the input (left-drag
   on the header bar moves the OS window; a press that moves more than `SLOP` is a drag, else a
-  click; Esc = back, quits from the city list) and the download jobs: `Overpass` fetch -> parse
+  click; Esc = back: office -> its city map -> the world map centred on that city
+  (`show_world(focus)`), quits from the world map; the game still opens on the last office)
+  and the download jobs: `Overpass` fetch -> parse
   and bake on a `Thread` -> save with `Store` -> open the next screen. Prints a `CITY ...` /
   `OFFICE ...` line with sizes and timings after each job.
 - `screen.gd` (`Screen`) - base for full-window screens. `ui.gd` (`Ui`) - shared drawing, a mirror
@@ -73,7 +76,29 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   with an ink rim and drop shadow; `caps()` swaps letters the fonts lack for their base letter),
   `micro` (the mockup's 3x5 font), `bar`, `coin`, and the `footer` with the OSM credit (on every
   screen) and the red DATOS DE PRUEBA tag in fixture mode. Hit targets >= `MIN_HIT`.
-- `city_pick.gd` (`CityPick`) - the shipped city list, 12 a page with < > arrows.
+- `world_map.gd` (`WorldMap`) + `world.gd` (`World`) - the first screen: the world in pixel art
+  from `assets/world/world_<level>.png` (4 pictures baked by `tools/build_world.gd`, each art
+  pixel 2x2 on screen), Miller projection cropped 84 N .. ~58 S so the map is exactly 2:1
+  (`World.unit` / `lat_at` / `lon_at`). Zoom steps x1 x2 x4 x8 x16 (`World.STEPS`; x16 shows
+  the x8 picture at 4x4, `texture_level`); the screen starts at `WorldMap.STEP_MIN` (1), the
+  farthest step whose map is as tall as the window, so the map always covers the whole window
+  (under the header and footer; markers and clicks stay in the band between them, `_band`;
+  the footer counts zoom from that step as X1), drag pans, wheel / - + zoom; the zoom and the view's middle are static, kept
+  for the session. Markers drawn live: a cream dot per `CityDb` city, a gold pin (the office
+  view's pin sprite, `WorldMap.pin`) with the office count where the player has offices, and
+  markers closer than `HIT` (48, >= MIN_HIT) on both axes grouped (`World.clusters`, offices'
+  cities first so they anchor) into a steel disc with the city count (a pin on top when the
+  group holds offices). Hover = a chip with the name(s); names under markers where they fit
+  (offices' cities gold, others from x4). Click: a lone city opens its map (`App.open_city`);
+  a city with offices or a group of <= `LIST_MAX` (4) opens the list (a panel at the bottom,
+  5 rows a page: city rows open the map, office rows the office); a bigger group zooms in to
+  the first step that splits it. HUD: money + income/min top right, - + and the list button
+  (`LIST_BTN` -> CityPick) down the right like the office view; footer note NATURAL EARTH +
+  zoom. With no office yet a hint asks for the first one. Esc closes the list, else quits.
+  Tool hooks: `set_level`, `center_on`, `focus`, `spot_of(city)`, `list_open`, `list_rows`,
+  `show_row`, `row_rect`.
+- `city_pick.gd` (`CityPick`) - the shipped city list, 12 a page with < > arrows, reached from
+  the world map's list button; back / Esc return to the world map.
 - `city_map.gd` (`CityMap`) + `city_paint.gd` (`CityPaint`) - the city map, north up, painted once
   into a SubViewport at 12 m/px and shown at x1/x2/x4, in a slate night palette (land SL1, sea
   CYAN_DD, parks GRASS_DD, roads slate -> gold by class); labels, office markers (gold house +
@@ -85,11 +110,11 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   Reintentar / Volver.
 - `office_view.gd` (`OfficeView`) - one saved office, the map viewer: shows `BlockView.texture`
   (drawn once, a frame or two after opening; `is_drawn()`) at x1/x2/x3 (x2 = the mockup), back +
-  neighbourhood ("N / M tuyos"), street names as `LABEL_STYLE` says (`StreetNames`; the static
-  `labels` lets tools switch it): PAINTED (default) has them in the drawing and only adds a
-  plate for the street under the pointer (`_street_under`, `HOVER_REACH`); MICRO / PLATES place
-  them over the map per view (`_labels_now`: each name once, nearest the view's middle first,
-  never over a lot or a building in the pick image, never over the pin).
+  neighbourhood ("N / M tuyos"). **No street names on the map** (Oscar): a click on open
+  ground (a street, a pavement, a park; `lot_under` -1) calls `name_street`, which finds the
+  street whose kerb is within `StreetNames.REACH` of the ground point under it (`ground_at`)
+  and shows its plate (kind in gold micro font over the name, a stem down to the street) for
+  `STREET_SHOW_MS` or until the next click (`street`, drawn by `_draw_street`).
   Lots are pointed at through BlockView's pick image (`lot_under`): hover = a cyan outline of
   everything the lot shows (grey when outside the active radius, still selectable), click =
   `select` (gold outline, slid up out from under the card; `focus_lot` pans one into view).
@@ -221,8 +246,7 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   trimmed to the wall) in painter's order, all in the lot's number (`r + g * 256 = lot + 1`):
   `lot_at(px)` is whatever lot is drawn there, a tower's roof included; `outline(lot)` gives
   the two pixel rings around it as runs (cached). `lots` = AreaBuilder's per-lot entries.
-  `street_labels()` gives label spots for the overlay (short names); `names` paints them on the
-  asphalt instead (AreaBuilder `names`); `pops` the roofs income pops rise from;
+  `pops` the roofs income pops rise from;
   `mark_box` the office's pin, `sign_box` it with a margin (labels keep clear), and
   `points_at_mark(px, grow)` (live mode: the depth image says nothing stands in front).
   `live` mode (the game): any lot may become a rascacielos, so the drawing leaves room for
@@ -246,49 +270,74 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   fence posts, weed patches, bushes and a "$" sign (in the radius); 1 a row of houses with
   hedged gardens (`Plotter.sites`, `SITE_DEPTH/FRONT`); 2 bigger houses with pools; 3
   apartment blocks of mixed heights and facades round a courtyard garden; 4 torres and 5
-  rascacielos as `Skyline` plans them (`_skyline` / `_piece`: each group one object, each mass
-  in it ringed in ink by `Painter.ink_under`) on a paved plaza; industrial 1-2 = sheds in a
+  rascacielos as `Skyline` plans them (`_skyline` / `_piece`: the plan's ground (plaza, paving
+  or lawn), its gardens and pools, each group one object, each mass in it ringed in ink by
+  `Painter.ink_under`, trees on what is left open; pieces BOX / HIP (pyramid roofs through
+  `Painter.pitched`) / BRIDGE / LAWN / POOL / SOLAR / SIGN (`_sign`, a billboard in a car tint)
+  / ANTENNA / TREE / PAD; an owned building's main roof is teal); industrial 1-2 = sheds in a
   yard; a plot with `works` = a building site (fence, concrete floors under a skeleton,
   scaffolding, a tower crane from bloque up; torres / rascacielos use the plan's footprints and
-  heights). With `names` on (the game, PAINTED), `_paint_names` paints `StreetNames.painted`
-  into the ground right after the lane marks (the dashes under a name are taken out) and every
-  tree laid out later keeps off them (`_on_name`), so a lot redraw keeps them. The office has no building: `_office_mark` draws a dashed gold ring on the ground
+  heights, the plan made from the same lot, `fronts` and `corner`). The office has no building: `_office_mark` draws a dashed gold ring on the ground
   (`pre`, under everything that stands) and a gold map pin sprite (`office`, the city map's
   house in its head; an object of no lot, so it sorts, outlines and goes through the depth pass
   like a lamp but never into the pick image) at `OfficeMark.at`; street trees, lamps, people and
   garden trees keep `MARK_CLEAR` from it. The lot the office was placed on is an ordinary lot.
-  Owned = teal roofs + cyan flags; an owned solar flies a flag instead of the sale sign.
+  Owned = one cyan flag per lot (`_take_flag`; roofs keep their own colours: teal ones read as a sea of blue lids); an owned solar flies a flag instead of the sale sign.
   Each lot's ground ops (`lot_ground`), shadows (`lot_shadows`) and objects are kept apart so
   `rebuild_lot` can lay it out again; `lots[i].roof` is where its pops rise; `tags` off leaves the
   price tags to the game. Every object records its `lot`; buildings fade per lot (`lots[i].active`
   = centroid inside the radius). Trees (gardens, parks, street trees), lamps and people inside
   the active radius (people only when `people` is on: one-off renders; the game's live
   drawing leaves them to Walkers), cars, price tags (`price_tag`, `price_of`) on the nearest signed lots. All
-  placement by stable hashes.
+  placement by stable hashes. **No trees on the road**: OSM parks often run under the
+  carriageways (the Gran Via's median); `_index_roads` buckets carriageways and rail beds as
+  capsules on a `ROAD_CELL` grid, `on_road(q, clear)`; `_scatter` keeps every trunk `TREE_CLEAR`
+  (1.8 m) off them, plants as many trees as the ground the park still shows (`_open_share`) over
+  its spacing and tries again the tries that land by a road, so a park keeps its density; street
+  trees on asphalt are dropped. All ground ops go through `Pal.ground` (PAVE* -> cement).
 - `skyline.gd` (`Skyline`) - the two top tiers as plans (data only; AreaBuilder draws them and
-  lays their works out from them). **Height cap** so a grown area reads in the widget: torres
-  roofs `TOWER_Z` 30-42 px + a 5 px setback (+ a podium in B), rascacielos' tallest roof
-  `SKY_Z` 52-60 px + a 7 px spire, the others of a lot stepped down (`STAGGER`); `top()` is
-  what `AreaBuilder.top_of` and the live headroom use. The tiers differ by count, glass and
-  gold, not height. Four layouts, `AreaBuilder.SKYLINE_STYLE` picks one (`AreaBuilder.skyline`
-  lets tools switch it): CLUSTER A (staggered slender glass towers), BRIDGES B (default: towers
-  on a lawn-roofed podium, rascacielos joined by gold sky bridges), MEGA C (a terraced block,
-  roof gardens, a helipad), RING D (towers round a garden with a fountain).
-- `street_names.gd` (`StreetNames`) - street names for the office view: `short()` (generic
-  word dropped or abbreviated: "Carrer d'Àngel Guimerà" -> ANGEL GUIMERA, Avinguda -> AV.,
-  accents dropped for the micro font), `runs()` (named streets' straight stretches),
-  `painted()` (B: names in the micro font painted on the asphalt in `PAINT_INK`, on straight
-  stretches of 8 m+ streets clear of junctions, sheared column by column to the street's slope,
-  each name at most `PAINT_REPEAT` times; from the streets alone). The four looks: MICRO A,
-  PAINTED B (default), PLATES C, HOVER D (`OfficeView.LABEL_STYLE`).
+  lays their works out from them). **Every lot its own**: `archetype()` picks one of 13 by
+  stable hash (`WEIGHT`; corner lots favour the corner landmark, small lots skip the roomy
+  ones): RACIMO (staggered towers of different widths), PUENTES (towers on a podium, sky bridges
+  on rascacielos), MEGABLOQUE (terraces with roof gardens), ANILLO (towers round a garden with a
+  fountain), MANZANA (mid-rise along the streets, a garden courtyard, the tall one rising out of
+  it), ZIGURAT (a stepped tower), TORRE Y BLOQUE (a slim tower beside a long slab), ART DECO (a
+  stone tower on a shop podium, two setbacks under trim bands, spire or mast), OFICINAS (a slab
+  on the street, a taller one behind it, AC, signs, helipad), HOTEL (a pool deck wing and a
+  balcony tower), ESQUINA (a chamfered landmark on the street corner, wings along both streets),
+  BLOQUE EN L (a stepped slab round the streets, its corner rising, pool and garden inside),
+  PLAZA (a tower on a plaza, pavilions; it was a pyramid roof, Oscar dropped them); an archetype the lot has no room for hands
+  over to the next. `_fill` then lines the lot's free street sides with lower buildings of their
+  own heights and facades (some sites left open), so a grown district keeps the mid tiers'
+  grain. `_greens` (Oscar: no sandy wasteland) then plants the paving the plan leaves open, past
+  a 2 m rim along the lot's edges and paths round every building and garden: squares on a grid
+  square to the lot (`GREEN_CELL` 9-14 m by lot, `GREEN_PATH` cement between, half to four fifths
+  of them, three kinds of lawn / bed), or for `GREEN_PARK` of the lots one park lawn per piece;
+  pieces under `GREEN_MIN` (140 m2) stay paved; all as plan `ground`. **Materials**: `SCHEMES` (12) give each lot a tall / alt / mid material, trim and roof:
+  glass in GLS blue, TEAL, CYN, GRN, BRZ bronze or STL dark steel (STYLE_SKY in that ramp),
+  concrete frames (STYLE_TOWER, its glass by variant), ribbon office slabs (STYLE_RIBBON), brick
+  / stone / white towers with punched windows, balconies or fins (STYLE_GRID), apartments and
+  offices. `_tower` ends a tower as `C_FLAT`, `C_SETBACK`, `C_GOLD`, `C_STEPS`, `C_PYRAMID`,
+  `C_PAD`, `C_ANTENNA` or `C_SPIRE`; `_props` puts AC units, water tanks, huts, solar panels, a
+  rooftop sign or a roof garden on flat roofs. **Height cap** so a grown area reads in the
+  widget: torres' tallest `TOWER_Z` 30-42 px (+ up to a 5 px setback), rascacielos' tallest
+  exactly `SKY_Z` 52-60 px (`sky_z`) + a crown (gold bands, spire, helipad or mast, never a pyramid; a
+  7 px spire at most); mid-rise `MID_Z`, pavilions `LOW_Z`; `top()` is what
+  `AreaBuilder.top_of` and the live headroom use. `AreaBuilder.skyline` (default `MIX`) lets
+  tools force one archetype.
+- `street_names.gd` (`StreetNames`) - street names for the click plate: `nearest(block, p)` (the
+  road whose kerb is within `REACH` of a ground point), `kind(road)` (Calle, Avenida, Plaza,
+  Paseo, Gran Vía, Autovía, Calle peatonal... from the name's first word, else the OSM kind),
+  `short()` (generic word dropped or abbreviated for the micro font: "Carrer d'Àngel Guimerà"
+  -> ANGEL GUIMERA, Avinguda -> AV.; used when a name is too long for the plate), `plain()`.
 - `painter.gd` (`Painter`) - records one object's ops (POLY, WALL, RECT, TEX) with the mockup's
   primitives: `wall` (wall_pixels), `prism`, `face3d`, `pitched`, Bresenham `line`. POLY ops
   from `flat`/`face3d` carry each corner's ground depth, WALL ops their two ends' (depth pass).
   `ink_under(start)` puts a one-pixel ink silhouette under the ops since `start` (a sprite's
   ink copy carries a 4th element), so masses sharing one object still read apart.
 - `world_shader.gd` (`WorldShader`) - the two shaders, generated with the palette's names: the
-  facade shader (walls per pixel: apartment, office, house, tower, sky, plain, skeleton,
-  scaffold, slab, cab, shed, ink; sprites from the atlas) and the ground shader.
+  facade shader (walls per pixel: apartment, office, house, tower (glass by variant), sky
+  (glass in its ramp), ribbon, grid, plain, skeleton, scaffold, slab, cab, shed, ink; sprites from the atlas) and the ground shader.
 - `depth_sort.gd` (`DepthSort`) - painter's order: separating axis between footprint hulls for
   every pair whose screen boxes overlap, then a topological sort (fixes long thin plots).
 - `pal.gd` (`Pal`), `iso.gd` (`Iso`), `sprites.gd` (`Sprites`) - see "Style A".
@@ -381,7 +430,12 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
 
 The office view is the mockup's renderer ported to the GPU, pixel for pixel in spirit:
 - **One palette** (`Pal`, 74 colours from `gen_battlegrounds.py`: Battlegrounds' slate/ink/gold/
-  cyan/mint/red plus the city ramps CRM OCH SAL STN TER TIL TEAL GLS CON). Every pixel of the
+  cyan/mint/red plus the city ramps CRM OCH SAL STN TER TIL TEAL GLS CON; `Pal.EXTRA` adds
+  ramps made of palette colours: GLD gold trim, STL dark steel, CYN / GRN / BRZ glass, numbered
+  after the car tints). The ground is **cement, not sand** (Oscar): `Pal.CEMENT` maps the
+  ground's PAVE names to CON1 (pavements, plazas, paved lots) with SL5 slab joints, a CON0 kerb
+  and lip (`Pal.ground`, the ground shader's `CEM` / `CEM_J`); the PAVE colours stay in the
+  palette unused by the ground. Every pixel of the
   drawing is a palette colour: nothing blends (`render_mode blend_disabled`), shadows, the dim
   outside the active radius and the faded "unpainted miniature" buildings are remap tables over
   the palette (`Pal.shadow/dim/fade`, rows of `Pal.lut()`). `render_office.gd` fails on any
@@ -472,6 +526,7 @@ godot --headless --path . --script res://tools/traffic_check.gd # 10 simulated m
 godot --headless --path . --script res://tools/walker_check.gd  # 5 simulated min of walkers
 godot --headless --path . --script res://tools/game_check.gd   # the game's rules, saves, bank
 godot --headless --path . --script res://tools/econ_sim.gd     # pacing table + bank promises
+godot --headless --path . --script res://tools/world_check.gd   # world map pictures + groups
 bash tools/cloud/screenshot.sh docs/screenshots --fixture       # the whole flow on test data
 bash tools/cloud/screenshot.sh docs/screenshots --fresh         # the whole flow on real downloads
 godot --headless --path . --script res://tools/net_check.gd     # one small real download
@@ -479,16 +534,34 @@ godot --headless --path . --script res://tools/net_check.gd     # one small real
 
 `screenshot.sh [outdir] [args]` runs `tools/cloud/capture.gd` under
 `xvfb-run -a -s "-screen 0 1280x1024x24" godot --path . --rendering-driver opengl3 --audio-driver Dummy`
-(mesa llvmpipe), because `--headless` renders nothing. The capture drives the real flow: city
-list, Barcelona map, cursor, confirm, loading, office (x2, a hovered lot, a selected lot with
+(mesa llvmpipe), because `--headless` renders nothing. The capture drives the real flow: the
+world map it opens on (`00_world_start`), the city list from its list button, Barcelona map,
+cursor, confirm, loading, office (x2, a hovered lot, a selected lot with
 its card, then Esc must close it), then plays the game in it (`NN_game_*`: the HUD, the
 office's pin pointed at, the office tab opened by clicking it (Esc closes it), a solar's buy
 card, bought + undo toast, build card, works with a crane, the office tab from the level line
 and the level-up in it, level 2, the bank, a loan sheet, the office tab at Nv 2 and its GERENTE
 page, the welcome-back card, a fully grown area x1/x2, the 200 px window), x3 close-up, x1 far, the red
-too-close cursor, offices in Tokyo and Warsaw, then the busy-server screen. Extra args: `--fixture`, `--fresh` (also re-download city maps;
+too-close cursor, offices in Tokyo and Warsaw, then the busy-server screen, the traffic
+close-up, and the world map (`NN_world_*`): a fourth office placed from it in Valencia (a big
+group clicked zooms in, then city -> office; back -> city map -> back -> the world centred on
+Valencia), the whole world with the four pins, Europe x8, a city pointed at, Spain x16, the
+list Barcelona's pin opens (its office row must open the office), Tokyo, the city list and
+back, the 200 px window. Leave Valencia out of `--spot`. Extra args: `--fixture`, `--fresh` (also re-download city maps;
 offices are always wiped first), `--spot=city:lat:lon` (repeatable, replaces the places),
 `--raw-cache=DIR`. Under Xvfb a `WARNING: Could not set V-Sync mode` line is normal.
+
+World map: `tools/fetch_natural_earth.sh /abs/dir` downloads Natural Earth's 1:50m land,
+lakes and country borders (GeoJSON, ~3.3 MB, public domain, `docs/NATURAL_EARTH.md`) outside
+the repo; `godot --headless --path . --script res://tools/build_world.gd -- --src=/abs/dir`
+bakes `assets/world/world_0..3.png` (300x150 .. 2400x1200 art px, ~265 KB together, palette
+colours only: land SL2 dithered SL1 with an SL3 coast rim, sea CYAN_DD with a TEAL3 shore ring,
+dotted SL1 borders from level 1, dotted TEAL3 30-degree graticule on open sea; pixel-centre
+scanline fill, even-odd per polygon, one-pixel lakes dropped; deterministic), then `--import`.
+Only rerun it to change the look. `world_check.gd` (headless) checks the pictures' sizes and
+palette, that every city lands on land, the projection round trip, and at every step that each
+city is in one group and no two hit boxes overlap. `docs/screenshots/worldmap/` holds the
+world map's shots on real data.
 
 Other tools: `bake_check.gd -- --raw=/abs/answer.json --lat= --lon= [--city]` bakes a saved raw
 Overpass answer (checks: polygons, every lot faces a street, 20..600 lots per 500 m area, an
@@ -517,14 +590,30 @@ builds a tower there through the one-lot redraw and fails if any pixel of the ca
 the free manager, saves, time away and its cap, clock moved back and forth, a broken save, the
 bank's limits and an adversarial max-loan + lost income + week away, managers, the builder, the
 office's free lot built like any other and its income by level, a v1 save migrated on load).
-`tools/cloud/skyline_sheet.gd -- --out=/abs/dir --file=/abs/office.json [--only=0,2]` (xvfb-run)
-renders the four skyline layouts side by side (two lots as torres, rascacielos and works, and
-the area fully grown at x2) into `skyline_options.png`; `tools/cloud/labels_sheet.gd --
---out=/abs/dir [--id=office] [--pan=x,y]` (xvfb-run, overwrites `user://save.json`) opens a
-saved office grown in the real game and shoots the four street-name looks at x2 with traffic
-(`labels_options.png`, `labels_final.png` = the look in use pointing at a street).
-`docs/screenshots/skyline/` holds them for Valencia, plus `skyline_before_after.png` (the grown
-area at x2, the old 170 px skyscrapers | the capped clusters) and `tiers_new.png`.
+`tools/cloud/skyline_sheet.gd -- --out=/abs/dir --file=/abs/office.json [--n=16]` (xvfb-run)
+builds up to 16 lots near the office as high as they may go, each with its own archetype as
+the game picks it (archetypes not shown yet first), into `top_tiers_gallery.png` (x2 cells,
+labelled), and `works_vs_built.png` (four of them as building sites | finished); fails on any
+pixel off the palette. `tools/cloud/variety_sheet.gd -- --out=/abs/dir --file=/abs/office.json
+[--tag=new] [--pair]` (xvfb-run; uses only BlockView, so it also runs on an older checkout for a
+before | after) grows every lot to its max tier (`grown_<tag>.png` x2 round the office,
+`grown_far_<tag>.png` x1) and to bloque (`bloque_<tag>.png`), `--pair` adds `bloque_vs_max.png`.
+`tools/cloud/street_click.gd -- --out=/abs/dir [--id=office]` (xvfb-run, overwrites
+`user://save.json`) opens a grown office in the real game, shoots it with no names, clicks a
+street and shoots its plate (`click_street_name.png`); fails if a plate shows before the click,
+none after it, or it outlives the next click. `docs/screenshots/variety/` holds them for
+Valencia (`grown_before_after.png`: the grown area at x2, the twin glass clusters | every lot its
+own; `grown_far_before_after.png` the same at x1; `top_tiers_gallery.png`, `works_vs_built.png`,
+`bloque_vs_max.png`, `click_street_name.png`).
+`tools/cloud/cement_sheet.gd -- --out=/abs/dir --file=/abs/office.json [--tag=new] [--pair=old]
+[--spot=name:x:y ...]` (xvfb-run; uses only BlockView, so it runs on an older checkout too) draws
+the whole office grown and early (`whole_<tag>_*.png` + their metre -> pixel maps) and with
+`--pair` puts an older run beside it, ANTES | AHORA: `grown_before_after.png`,
+`early_before_after.png` (x2 round the office) and an x3 close-up per spot; fails on any pixel
+off the palette. `docs/screenshots/cement/` holds them for Valencia: the sand turned cement and
+planted, `jesus_maria_triangle.png` (spot -75:55), `gran_via_trees.png` (40:-100, the median's
+trees off the carriageways).
+`docs/screenshots/skyline/` keeps the earlier height-cap work (the four old layouts).
 `econ_sim.gd [-- --file=/abs/office.json] [--days=N] [--only=ideal,widget,lazy,loans,abuser,absent]`
 plays kinds of player and prints milestones and snapshots (fixture area by default); it exits 1
 if any player ever has interest above the cap or debt that does not shrink with autopay. `docs/screenshots/style_a_side_by_side.png` is the mockup next to the
