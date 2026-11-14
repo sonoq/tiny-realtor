@@ -100,8 +100,11 @@ const TRAITS := {
 	"interest": {"name": "Banquero", "fmt": "-%d%% interés, más préstamo",
 		"v": [0.15, 0.25, 0.40, 0.60]},
 	"crane": {"name": "Capataz", "fmt": "+%d grúa", "v": [1.0, 1.0, 1.0, 1.0]},
+	"deals": {"name": "Ofertas", "fmt": "+%d%% eventos", "v": [0.15, 0.25, 0.40, 0.60]},
+	"handy": {"name": "Mañoso", "fmt": "+%d%% encargos", "v": [0.15, 0.25, 0.40, 0.60]},
 }
-const COMMON_TRAITS: Array[String] = ["rent", "cost", "time", "land", "offline", "interest"]
+const COMMON_TRAITS: Array[String] = ["rent", "cost", "time", "land", "offline", "interest",
+	"deals", "handy"]
 const SPECIAL_TRAITS: Array[String] = ["crane"]
 const FIRST_NAMES: Array[String] = ["Lola", "Paco", "Marisa", "Toni", "Carmen", "Julián", "Rosa",
 	"Nacho", "Pilar", "Quique", "Maite", "Andrés", "Inés", "Rafa", "Elena", "Jordi", "Nuria",
@@ -109,6 +112,52 @@ const FIRST_NAMES: Array[String] = ["Lola", "Paco", "Marisa", "Toni", "Carmen", 
 const LAST_NAMES: Array[String] = ["Martín", "Ferrer", "Soler", "Navarro", "Iglesias", "Ruiz",
 	"Vidal", "Castro", "Ortega", "Gil", "Romero", "Peris", "Llopis", "Torres", "Molina", "Blasco",
 	"Serrano", "Campos", "Marín", "Bosch"]
+
+# events (docs/GAMEPLAY.md "Eventos"): short offers and tenant jobs that only turn up while you
+# are looking at the game, so playing actively speeds you up without an idle player losing
+# anything. Every reward is minutes of your income at that moment (so it stays worth it all
+# game), and all of them together take at most EVENT_HOUR_CAP minutes an hour (a bucket that
+# fills back at that pace, also while away): an active player goes about twice the idle pace,
+# never ten times. Times are seconds of active play (window focused or the pointer moving).
+# active seconds between one event ending and the next one, and how long an event waits for you
+const EVENT_WAIT: Array[float] = [60.0, 180.0]
+const EVENT_LIFE: Array[float] = [60.0, 120.0]
+# nothing makes sense right now (nothing to buy, no rent yet): look again this much later
+const EVENT_RETRY := 30.0
+const EVENT_HOUR_CAP := 20.0
+# a new game's bucket: the first minutes grow fastest, so they start with little in it
+const EVENT_START := 2.0
+# how often each kind is picked among the ones that make sense now
+const EVENT_WEIGHT := {"sale": 3.0, "express": 2.0, "vip": 2.0, "buyer": 1.0, "job": 4.0}
+# "Solar en oferta": a lot for sale in the radius at a discount for the event's life; worth at
+# least SALE_MIN and at most SALE_MAX minutes of income, on a lot whose full price is within
+# SALE_REACH minutes of income of your cash (it saves money on what you would buy soon anyway;
+# a bargain far beyond your means would skip the game ahead)
+const SALE_CUTS: Array[float] = [0.3, 0.4, 0.5]
+const SALE_MIN := 0.5
+const SALE_MAX := 6.0
+const SALE_REACH := 2.0
+# "Obra exprés": accepted, the next works you start in that office within EXPRESS_WINDOW s take
+# EXPRESS_CUT less time (at most EXPRESS_MAX_S saved); offered when some works of at least
+# EXPRESS_MIN_S can be started now
+const EXPRESS_CUT := 0.5
+const EXPRESS_WINDOW := 120.0
+const EXPRESS_MAX_S := 1800.0
+const EXPRESS_MIN_S := 60.0
+# "Inquilino VIP": one of your buildings pays VIP_X its rent for VIP_S, shortened so the extra
+# is at most VIP_MAX minutes of income (and no offer under VIP_MIN_S)
+const VIP_X := 2.0
+const VIP_S := 600.0
+const VIP_MIN_S := 120.0
+const VIP_MAX := 4.0
+# "Comprador con prisa": cash now, between these minutes of income
+const BUYER_MIN: Array[float] = [2.0, 4.0]
+# tenant jobs (the minigames): JOB_MIN minutes of income for a perfect job, a partial one pays in
+# proportion, and even a failed one pays JOB_FAIL of it; JOB_S seconds to play
+const JOB_MIN := 4.0
+const JOB_FAIL := 0.15
+const JOB_S := 15.0
+const JOB_GAMES: Array[String] = ["plunge", "wires", "bulbs"]
 
 # location bonuses from the real map: [name on the card, share of extra rent]
 const MOD_PARK := ["Parque cerca", 0.20]

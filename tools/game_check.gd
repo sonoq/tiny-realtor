@@ -6,8 +6,12 @@ extends SceneTree
 # forth, a broken save, the bank (limits, fee, interest never above the rent's cap, money never
 # going down, debt shrinking with autopay, a max loan then lost income then a week away), the
 # managers (stable candidates, prices, hiring) and the office with no building (its free lot is
-# an ordinary one, its own income by level) including a v1 save from before, migrated on load.
-# Uses the made-up fixture area (no network).
+# an ordinary one, its own income by level) including a v1 save from before, migrated on load;
+# and the events (Events): they come only with active play, one waits at a time and through time
+# away, they run out, each offer does what it says (a sale's price, an exprés's time, a VIP's
+# rent to the second, a buyer's cash, a job's pay by score), the hourly cap holds, the managers'
+# event traits, the three minigames played like a player, and pending events and timed effects
+# surviving a save (and a v2 save getting them fresh). Uses the made-up fixture area (no network).
 #
 #   godot --headless --path . --script res://tools/game_check.gd
 #
@@ -38,6 +42,11 @@ func _init() -> void:
 	_builder()
 	_office_lot()
 	_migration()
+	_events_spawn()
+	_events_offers()
+	_events_cap_and_traits()
+	_minigames()
+	_events_save()
 	_broken_save()
 	_format()
 	for p in [SAVE, SAVE + ".bak", SAVE + ".tmp"]:
@@ -500,6 +509,439 @@ func _migration() -> void:
 		"the migrated save reloads as it is, without migrating twice")
 	for p in [SAVE + ".bak", SAVE + ".tmp"]:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
+
+
+# --- events --------------------------------------------------------------------------------------
+
+# a game with two built lots (the office's own solar and a bought one, both Casas) and money
+func _built_game() -> Game:
+	var g := _new_game()
+	var lid: String = _block["office_plot"]
+	g.build(OFFICE, lid)
+	var solar := _solar(g)
+	g.state["money"] = 1e6
+	g.buy(OFFICE, solar)
+	_play(g, Economy.BUILD_TIME[1] + 1.0)
+	g.build(OFFICE, solar["id"])
+	_play(g, Economy.BUILD_TIME[1] + 1.0)
+	# an hour into the game: the events' bucket is full
+	Events.of(g)["budget"] = Economy.EVENT_HOUR_CAP
+	return g
+
+
+# `s` seconds of play in the office, active or not, the clock running with it
+func _ev_play(g: Game, s: float, active: bool, step: float = 1.0) -> Array[Dictionary]:
+	var made: Array[Dictionary] = []
+	var left := s
+	while left > 0.0:
+		var dt := minf(step, left)
+		_wait(g, dt)
+		var ev := Events.tick(g, OFFICE, _infos, dt, active)
+		if not ev.is_empty():
+			made.append(ev)
+		left -= dt
+	return made
+
+
+func _events_spawn() -> void:
+	var g := _built_game()
+	var e := Events.of(g)
+	_check(float(e["wait"]) == Economy.EVENT_WAIT[0], "the first event comes after a minute")
+	_check(float(Events.of(_new_game())["budget"]) == Economy.EVENT_START,
+		"a new game starts with a small bucket")
+	# looking away: nothing comes, however long
+	_check(_ev_play(g, 600.0, false, 30.0).is_empty(), "no event while the player is away")
+	_check(Events.pending(g, OFFICE).is_empty(), "nothing waits after time away with none")
+	var made := _ev_play(g, Economy.EVENT_WAIT[0] - 1.0, true)
+	_check(made.is_empty(), "no event before its wait is up")
+	made = _ev_play(g, 2.0, true)
+	_check(made.size() == 1 and not Events.pending(g, OFFICE).is_empty(),
+		"an event after a minute of active play")
+	if made.is_empty():
+		return
+	var ev := made[0]
+	_check(float(ev["life"]) >= Economy.EVENT_LIFE[0] and float(ev["life"]) <= Economy.EVENT_LIFE[1],
+		"an event lives 60..120 s: %s" % ev["life"])
+	_check(float(e["wait"]) >= Economy.EVENT_WAIT[0] and float(e["wait"]) <= Economy.EVENT_WAIT[1],
+		"the next one comes 60..180 s later")
+	# away with one waiting: it is still there, and only it, when the player is back
+	var left := float(ev["left"])
+	_ev_play(g, 3.0 * 3600.0, false, 60.0)
+	var p := Events.pending(g, OFFICE)
+	_check(int(p.get("n", -1)) == int(ev["n"]) and _near(float(p["left"]), left, 1e-9),
+		"the waiting event keeps waiting while away, and no other comes")
+	_check(Events.of(g)["pending"].size() <= 1, "at most one event waits after time away")
+	# while one waits no other comes; when its life is up it goes, costing nothing
+	var money := g.money()
+	made = _ev_play(g, left - 0.5, true, 0.5)
+	_check(made.is_empty() and int(Events.pending(g, OFFICE).get("n", -1)) == int(ev["n"]),
+		"no second event while one waits")
+	_ev_play(g, 1.0, true, 0.5)
+	_check(Events.pending(g, OFFICE).is_empty() and int(e["stats"]["expired"]) == 1,
+		"an ignored event runs out")
+	_check(g.money() >= money, "an event running out costs nothing")
+	_check(e["log"].size() >= 1 and e["log"][-1]["how"] == "expired", "the log keeps the outcome")
+	# the pace: an hour of active play, every event ignored, then every one taken at once
+	var g2 := _built_game()
+	var n_ignored := _ev_play(g2, 3600.0, true).size()
+	_check(n_ignored >= 3600.0 / (Economy.EVENT_WAIT[1] + Economy.EVENT_LIFE[1]) - 1
+		and n_ignored <= 3600.0 / (Economy.EVENT_WAIT[0] + Economy.EVENT_LIFE[0]) + 1,
+		"ignored events come every 2-5 min: %d an hour" % n_ignored)
+	var g3 := _built_game()
+	var taken := 0
+	for _i in 3600:
+		_wait(g3, 1.0)
+		if not Events.tick(g3, OFFICE, _infos, 1.0, true).is_empty():
+			taken += 1
+			Events.dismiss(g3, OFFICE)
+	_check(taken >= 3600.0 / Economy.EVENT_WAIT[1] - 2 and taken <= 3600.0 / Economy.EVENT_WAIT[0]
+		+ 1, "events come every 1-3 min of active play: %d an hour" % taken)
+	print("  events: %d an hour ignored, %d an hour answered at once" % [n_ignored, taken])
+	# the same game makes the same events
+	var a := _built_game()
+	var b := _built_game()
+	var ea := _ev_play(a, 900.0, true)
+	var eb := _ev_play(b, 900.0, true)
+	var same := ea.size() == eb.size()
+	for k in mini(ea.size(), eb.size()):
+		same = same and ea[k]["kind"] == eb[k]["kind"] and ea[k]["lot"] == eb[k]["lot"]
+	_check(same and ea.size() > 0, "events are deterministic")
+	# every kind turns up
+	var kinds := {}
+	var g4 := _built_game()
+	g4.state["money"] = 2e6
+	for _i in 4:
+		for ev2 in _ev_play(g4, 1800.0, true):
+			kinds[ev2["kind"]] = true
+			Events.dismiss(g4, OFFICE)
+	_check(kinds.size() == Events.KINDS.size(), "every kind of event turns up: %s" % [kinds.keys()])
+
+
+func _events_offers() -> void:
+	# a sale: the lot's price drops by its cut while it lives, buying it takes it (a new game:
+	# a solar's discount is minutes of its small income)
+	var g := _new_game()
+	Events.of(g)["budget"] = Economy.EVENT_HOUR_CAP
+	g.state["money"] = 1e6
+	var full := {}
+	for info in _infos:
+		if not g.owns(OFFICE, info["id"]):
+			full[info["id"]] = g.buy_price(OFFICE, info)
+	var ev := Events.spawn(g, OFFICE, _infos, "sale")
+	_check(not ev.is_empty(), "a sale is offered when a lot is for sale")
+	if not ev.is_empty():
+		var info: Dictionary = _infos[_index_of(ev["lot"])]
+		var cut := float(ev["cut"])
+		_check(cut >= 0.1 and cut <= 0.6 and float(info["dist"]) <= g.radius(OFFICE),
+			"a sale is 10-60 % off a lot in the radius")
+		var price := g.buy_price(OFFICE, info)
+		_check(_near(price, float(full[ev["lot"]]) * (1.0 - cut), 1e-9), "the sale cuts the price")
+		var saved := float(full[ev["lot"]]) - price
+		_check(saved <= Economy.SALE_MAX * g.income() * 1.0001
+			and saved >= Economy.SALE_MIN * g.income() * 0.9999,
+			"a sale saves 0,5-6 min of income")
+		var m0 := g.money()
+		_check(g.buy(OFFICE, info) == "" and _near(m0 - g.money(), price, 1e-9),
+			"buying it pays the sale price")
+		_check(Events.pending(g, OFFICE).is_empty(), "buying the lot takes the sale")
+	# a sale is never offered out of reach
+	var poor := _built_game()
+	for _k in 30:
+		poor.state["money"] = 0.0
+		var s := Events.spawn(poor, OFFICE, _infos, "sale")
+		if s.is_empty():
+			continue
+		var info: Dictionary = _infos[_index_of(s["lot"])]
+		_check(poor.buy_price(OFFICE, info) <= Economy.SALE_REACH * poor.income() * 1.0001,
+			"a sale is within a few minutes of income")
+		Events.dismiss(poor, OFFICE)
+	# no exprés when nothing can be built, one when it can; taken, the next works take half
+	var x := _built_game()
+	x.state["money"] = 0.0
+	_check(Events.spawn(x, OFFICE, _infos, "express").is_empty(), "no exprés with nothing to build")
+	x.state["money"] = 1e6
+	ev = Events.spawn(x, OFFICE, _infos, "express")
+	_check(not ev.is_empty(), "an exprés when works can start")
+	if not ev.is_empty():
+		_check(Events.accept(x, OFFICE) == "" and Events.express_left(x, OFFICE) > 0.0,
+			"taking an exprés")
+		var lid: String = ev["lot"]
+		var l := x.lot(OFFICE, lid)
+		var secs := x.build_time(OFFICE, int(l["t"]), int(l["t"]) + 1)
+		x.build(OFFICE, lid)
+		_check(_near(float(l["end"]) - float(l["start"]), secs * 0.5, 1e-9),
+			"the next works take half the time")
+		_check(Events.express_left(x, OFFICE) == 0.0, "the exprés is used up")
+		_play(x, secs)
+		x.state["money"] = 1e9
+		x.build(OFFICE, lid)
+		_check(_near(float(l["end"]) - float(l["start"]),
+			x.build_time(OFFICE, int(l["t"]), int(l["t"]) + 1), 1e-9), "only the next works")
+	# an exprés not used in time is gone
+	var y := _built_game()
+	y.state["money"] = 1e6
+	if not Events.spawn(y, OFFICE, _infos, "express").is_empty():
+		Events.accept(y, OFFICE)
+		_play(y, Economy.EXPRESS_WINDOW + 1.0)
+		var lid2: String = _block["office_plot"]
+		y.build(OFFICE, lid2)
+		var l2 := y.lot(OFFICE, lid2)
+		_check(_near(float(l2["end"]) - float(l2["start"]), y.build_time(OFFICE, 1, 2), 1e-9),
+			"an exprés runs out after its window")
+	# a VIP tenant: double rent for its time, to the second, then back
+	var v := _built_game()
+	ev = Events.spawn(v, OFFICE, _infos, "vip")
+	_check(not ev.is_empty(), "a VIP when a building has tenants")
+	if not ev.is_empty():
+		var twin := _game()
+		twin.state = v.state.duplicate(true)
+		twin._rent_t = v._rent_t
+		Events.dismiss(twin, OFFICE)
+		var l := v.lot(OFFICE, ev["lot"])
+		var r := v.lot_rent(OFFICE, l)
+		var inc := v.income()
+		_check(Events.accept(v, OFFICE) == "", "taking a VIP")
+		_check(_near(v.lot_rent(OFFICE, l), r * Economy.VIP_X, 1e-9), "a VIP doubles the rent")
+		var secs := float(ev["secs"])
+		_check(secs >= Economy.VIP_MIN_S and secs <= Economy.VIP_S
+			and r * (Economy.VIP_X - 1.0) * secs / 60.0 <= Economy.VIP_MAX * inc * 1.0001,
+			"a VIP lasts 2-10 min and adds at most 4 min of income")
+		var m0 := v.money()
+		var t0 := twin.money()
+		# both paid in one jump across the VIP's end, as away time or a long tick would
+		_t += secs + 300.0
+		_mono += secs + 300.0
+		v.advance(v.now())
+		twin.advance(_t)
+		var extra := (v.money() - m0) - (twin.money() - t0)
+		_check(_near(extra, r * (Economy.VIP_X - 1.0) * secs / 60.0, 1e-6),
+			"a VIP pays its extra to the second: %s" % Economy.money(extra))
+		_check(not l.has("vip") and _near(v.lot_rent(OFFICE, l), r, 1e-9), "then the rent is back")
+	# a buyer: cash now, minutes of income
+	var c := _built_game()
+	ev = Events.spawn(c, OFFICE, _infos, "buyer")
+	if not ev.is_empty():
+		var m0 := c.money()
+		var pay := float(ev["minutes"]) * c.income()
+		_check(Events.accept(c, OFFICE) == "" and _near(c.money() - m0, pay, 1e-9),
+			"a buyer pays his minutes of income")
+		_check(float(ev["minutes"]) >= Economy.BUYER_MIN[0] - 1e-9
+			and float(ev["minutes"]) <= Economy.BUYER_MIN[1], "a buyer pays 2-4 min")
+	else:
+		_check(false, "a buyer is offered with buildings")
+	# a job pays by its score, and only once; a dismissed event gives its reward back
+	var j := _built_game()
+	ev = Events.spawn(j, OFFICE, _infos, "job")
+	_check(not ev.is_empty() and ev["game"] in Economy.JOB_GAMES, "a job is offered")
+	if not ev.is_empty():
+		var full_pay := Economy.JOB_MIN * j.income()
+		_check(_near(Events.job_pay(j, ev, 1.0), full_pay, 1e-9), "a perfect job pays JOB_MIN")
+		_check(_near(Events.job_pay(j, ev, 0.0), full_pay * Economy.JOB_FAIL, 1e-9),
+			"a failed job pays a little, never a loss")
+		_check(_near(Events.job_pay(j, ev, 0.5), full_pay * (Economy.JOB_FAIL
+			+ (1.0 - Economy.JOB_FAIL) * 0.5), 1e-9), "a half job pays in proportion")
+		var m0 := j.money()
+		var paid := Events.finish_job(j, OFFICE, int(ev["n"]), 0.5)
+		_check(_near(j.money() - m0, paid, 1e-9) and paid > 0.0, "a job pays when it ends")
+		_check(Events.finish_job(j, OFFICE, int(ev["n"]), 1.0) == 0.0, "a job pays once")
+		var b0 := float(Events.of(j)["budget"])
+		var ev2 := Events.spawn(j, OFFICE, _infos)
+		if not ev2.is_empty():
+			var b1 := float(Events.of(j)["budget"])
+			Events.dismiss(j, OFFICE)
+			_check(_near(float(Events.of(j)["budget"]), b1 + float(ev2.get("minutes", 0.0)), 1e-9)
+				and b1 <= b0, "a dismissed event gives its reward back")
+
+
+func _index_of(lot_id: String) -> int:
+	for i in _infos.size():
+		if _infos[i]["id"] == lot_id:
+			return i
+	return -1
+
+
+func _events_cap_and_traits() -> void:
+	# taking every event at once for three hours never pays more than the cap allows
+	var g := _built_game()
+	var minutes := 0.0
+	for _i in 3 * 3600:
+		_wait(g, 1.0)
+		var ev := Events.tick(g, OFFICE, _infos, 1.0, true)
+		if ev.is_empty():
+			continue
+		match ev["kind"]:
+			"job":
+				minutes += float(ev["minutes"])
+				Events.finish_job(g, OFFICE, int(ev["n"]), 1.0)
+			"sale":
+				minutes += float(ev["minutes"])
+				g.state["money"] = g.money() + 1e9
+				g.buy(OFFICE, _infos[_index_of(ev["lot"])])
+				g.state["money"] = g.money() - 1e9
+			"express":
+				Events.accept(g, OFFICE)
+			_:
+				minutes += float(ev["minutes"])
+				Events.accept(g, OFFICE)
+	var cap := Economy.EVENT_HOUR_CAP * 4.0
+	_check(minutes <= cap + 1e-6, "events never add more than the hourly cap: %.1f min in 3 h"
+		% minutes)
+	print("  events: %.1f min of income from events in 3 h, everything taken" % minutes)
+	# the managers' event traits
+	var h := _built_game()
+	h.office(OFFICE)["manager"] = {"name": "A B", "face": 1, "rarity": 1,
+		"traits": [{"k": "handy", "v": 0.25}, {"k": "deals", "v": 0.5}], "level": 2}
+	var ev := Events.spawn(h, OFFICE, _infos, "job")
+	_check(not ev.is_empty() and _near(float(ev["minutes"]), Economy.JOB_MIN * 1.25, 1e-9),
+		"Mañoso pays jobs more")
+	Events.dismiss(h, OFFICE)
+	Events.of(h)["wait"] = 90.0
+	_check(_near(Events.next_in(h, OFFICE), 60.0, 1e-9), "Ofertas brings events sooner")
+	_check(Economy.trait_text({"k": "deals", "v": 0.25}) == "+25% eventos"
+		and Economy.trait_text({"k": "handy", "v": 0.25}) == "+25% encargos", "trait texts")
+
+
+# the minigames, played like a player would (and badly)
+func _minigames() -> void:
+	# the plunger: press when the marker is in the zone, six times
+	var p := PlungeGame.new(12345)
+	var guard := 0
+	while not p.over and guard < 2000:
+		guard += 1
+		p.step(1.0 / 60.0)
+		var z := p.zone()
+		if p.ready_to_push() and p.marker() > z.x + 0.02 and p.marker() < z.y - 0.02:
+			p.press(PlungeGame.PUSH.get_center())
+	_check(p.won and p.score() == 1.0 and p.t < Economy.JOB_S, "the plunger can be won: %d/%d in %.1f s"
+		% [p.good, PlungeGame.GOAL, p.t])
+	var miss := PlungeGame.new(12345)
+	for _k in 40:
+		miss.step(0.05)
+		var z := miss.zone()
+		if miss.marker() < z.x - 0.1 or miss.marker() > z.y + 0.1:
+			miss.press(PlungeGame.PUSH.get_center())
+	_check(miss.good == 0 and miss.misses > 0 and not miss.ready_to_push() or miss.misses > 0,
+		"pushing off the zone misses")
+	var idle := PlungeGame.new(7)
+	for _k in 1000:
+		idle.step(0.05)
+	_check(idle.over and not idle.won and idle.score() == 0.0, "the plunger times out at 0")
+	# mashing does not pay: a press every frame for the whole time
+	var mash := PlungeGame.new(99)
+	while not mash.over:
+		mash.step(1.0 / 60.0)
+		mash.press(PlungeGame.PUSH.get_center())
+	_check(mash.score() < 1.0, "mashing does not win the plunger: %d" % mash.good)
+	# the wires, by clicks and by drag, and a wrong socket
+	var w := WiresGame.new(4242)
+	w.step(0.1)
+	var wrong := (w.slot_of[0] + 1) % WiresGame.N
+	w.press(w.end_rect(0, 0).get_center())
+	w.press(w.end_rect(1, wrong).get_center())
+	_check(w.joined() == 0 and w.held == 0, "a wrong socket does not join, the wire stays in hand")
+	w.press(w.end_rect(1, w.slot_of[0]).get_center())
+	_check(w.joined() == 1, "click-click joins a wire")
+	# drag: press on the wire, move over the right socket
+	w.press(w.end_rect(0, 1).get_center())
+	w.drag(Vector2(300, 300))
+	w.drag(w.end_rect(1, w.slot_of[1]).get_center())
+	_check(w.joined() == 2, "dragging over its socket joins a wire")
+	# socket first, then the wire
+	w.press(w.end_rect(1, w.slot_of[2]).get_center())
+	w.press(w.end_rect(0, 2).get_center())
+	w.press(w.end_rect(0, 3).get_center())
+	w.press(w.end_rect(1, w.slot_of[3]).get_center())
+	_check(w.won and w.score() == 1.0, "all four wires win")
+	for side in 2:
+		for k in WiresGame.N:
+			_check(w.end_rect(side, k).size.y >= Ui.MIN_HIT and w.end_rect(side, k).size.x
+				>= Ui.MIN_HIT, "wire ends are at least MIN_HIT")
+	var w2 := WiresGame.new(4242)
+	for _k in 400:
+		w2.step(0.05)
+	_check(w2.over and w2.score() == 0.0, "the wires time out at 0")
+	# the bulbs: fix each as it goes out
+	var b := BulbsGame.new(777)
+	while not b.over:
+		b.step(1.0 / 30.0)
+		for k in b.state.size():
+			if b.state[k] == 1:
+				b.press(b.hit(k).get_center())
+	_check(b.won and b.score() == 1.0 and b.went_out == BulbsGame.START_DARK
+		+ BulbsGame.BURNS.size(), "the bulbs can all be fixed: %d/%d" % [b.fixed, b.went_out])
+	var b2 := BulbsGame.new(777)
+	b2.step(0.1)
+	b2.press(b2.hit(b2.state.find(0)).get_center())
+	_check(b2.fixed == 0, "a lit window needs nothing")
+	b2.press(b2.hit(b2.state.find(1)).get_center())
+	for _k in 400:
+		b2.step(0.05)
+	_check(b2.over and not b2.won and b2.score() > 0.0 and b2.score() < 0.5,
+		"a lazy bulbs job scores a little: %.2f" % b2.score())
+	_check(b2.hit(0).size.x >= Ui.MIN_HIT, "windows are at least MIN_HIT")
+	# the same seed plays the same
+	_check(WiresGame.new(5).slot_of == WiresGame.new(5).slot_of, "a job's seed fixes its layout")
+
+
+func _events_save() -> void:
+	var g := _built_game()
+	g.state["money"] = 1e6
+	var ev := Events.spawn(g, OFFICE, _infos, "job")
+	_ev_play(g, 7.0, true)
+	var left := float(Events.pending(g, OFFICE).get("left", 0.0))
+	# a VIP on one lot and an exprés on the office, saved with the event
+	var lid: String = _block["office_plot"]
+	g.lot(OFFICE, lid)["vip"] = _t + 300.0
+	g.lot(OFFICE, lid)["vx"] = 2.0
+	g.office(OFFICE)["express"] = _t + 60.0
+	g.save()
+	var h := _game()
+	h.load_or_new()
+	var p := Events.pending(h, OFFICE)
+	_check(int(h.state["version"]) == 3, "the save is v3")
+	_check(int(p.get("n", -1)) == int(ev["n"]) and _near(float(p["left"]), left, 1e-9)
+		and p["game"] == ev["game"] and int(p["seed"]) == int(ev["seed"]),
+		"a waiting event survives a restart")
+	_check(_near(Events.vip_left(h, OFFICE, lid), 300.0, 1e-6) and _near(h.lot_rent(OFFICE,
+		h.lot(OFFICE, lid)), g.lot_rent(OFFICE, g.lot(OFFICE, lid)), 1e-9),
+		"a VIP survives a restart")
+	_check(_near(Events.express_left(h, OFFICE), 60.0, 1e-6), "an exprés survives a restart")
+	var sale := _built_game()
+	sale.state["money"] = 1e6
+	var se := Events.spawn(sale, OFFICE, _infos, "sale")
+	sale.save()
+	var hs := _game()
+	hs.load_or_new()
+	if not se.is_empty():
+		var info: Dictionary = _infos[_index_of(se["lot"])]
+		_check(_near(hs.buy_price(OFFICE, info), sale.buy_price(OFFICE, info), 1e-9)
+			and Events.sale_cut(hs, OFFICE, se["lot"]) > 0.0, "a sale's price survives a restart")
+	# a v2 save (no events) loads with them fresh; odd event data is dropped
+	var v2 := g.state.duplicate(true)
+	v2.erase("events")
+	v2["version"] = 2
+	Store.write_json(SAVE, v2)
+	var k := _game()
+	k.load_or_new()
+	_check(int(k.state["version"]) == 3 and Events.pending(k, OFFICE).is_empty()
+		and float(Events.of(k)["budget"]) == Economy.EVENT_START, "a v2 save gets events fresh")
+	var bad := g.state.duplicate(true)
+	bad["events"] = {"wait": "x", "budget": 1e9, "pending": {OFFICE: {"kind": "nope"},
+		"ghost": {"kind": "job", "n": 1, "left": 5.0}}, "log": 3}
+	bad["offices"][OFFICE]["express"] = "soon"
+	bad["offices"][OFFICE]["lots"][lid]["vip"] = "later"
+	Store.write_json(SAVE, bad)
+	var q := _game()
+	q.load_or_new()
+	var qe := Events.of(q)
+	_check(qe["pending"].is_empty() and float(qe["budget"]) <= Economy.EVENT_HOUR_CAP
+		and qe["log"] is Array and not q.office(OFFICE).has("express")
+		and not q.lot(OFFICE, lid).has("vip"), "malformed events are dropped")
+	_play(q, 60.0)
+	_ev_play(q, 200.0, true)
+	_check(is_finite(q.money()), "a sanitized events save plays on")
+	for f in [SAVE + ".bak", SAVE + ".tmp"]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(f))
 
 
 func _broken_save() -> void:
