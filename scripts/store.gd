@@ -5,7 +5,8 @@ extends RefCounted
 # refreshed (docs/DESIGN.md): a city map is fetched once per city, an office area once per office.
 #   user://cities/<city>.json        baked city map (roads, water, neighbourhood names)
 #   user://offices/index.json        {"offices": [office meta, ...]}
-#   user://offices/<office>.json     baked block (format tiny-realestate-block v2) + "office" meta
+#   user://offices/<office>.json     baked block (format tiny-realestate-block v3) + "office" meta
+#   user://save.json                 the player's game (Game; save_fixture.json with test data)
 
 const CITIES := "user://cities"
 const OFFICES := "user://offices"
@@ -15,14 +16,19 @@ static var _offices: Array[Dictionary] = []
 static var _loaded := false
 
 
+# null when the file is missing or not JSON (quietly: a broken save is handled by the caller)
 static func read_json(path: String) -> Variant:
 	if not FileAccess.file_exists(path):
 		return null
-	return JSON.parse_string(FileAccess.get_file_as_string(path))
+	var json := JSON.new()
+	if json.parse(FileAccess.get_file_as_string(path)) != OK:
+		return null
+	return json.data
 
 
-# writes through a temp file, so a crash mid-write never leaves half a save behind
-static func write_json(path: String, data: Variant) -> int:
+# writes through a temp file, so a crash mid-write never leaves half a save behind; with
+# `backup` the file being replaced is kept as <path>.bak first (the game's save)
+static func write_json(path: String, data: Variant, backup: bool = false) -> int:
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var tmp := path + ".tmp"
 	var f := FileAccess.open(tmp, FileAccess.WRITE)
@@ -32,6 +38,8 @@ static func write_json(path: String, data: Variant) -> int:
 	f.store_string(JSON.stringify(data))
 	var size := f.get_length()
 	f.close()
+	if backup and FileAccess.file_exists(path):
+		DirAccess.copy_absolute(path, path + ".bak")
 	DirAccess.rename_absolute(tmp, path)
 	return size
 

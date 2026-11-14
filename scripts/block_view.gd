@@ -19,8 +19,14 @@ extends Node2D
 #              price tags as nearest of all; kept as `depth_tex` with the shadow mask
 #              (`shade_tex`), so Traffic's moving cars hide behind whatever stands in front
 # Every pixel is a palette colour: no blending anywhere (render_mode blend_disabled).
+# In `live` mode (the game's office view) the builder and the finished image are kept, and
+# `redraw_lot` lays one lot out again and redraws only the rectangle it touches (old and new
+# buildings, their shadows, a margin), in small throwaway viewports, then pastes it into the
+# image, the texture and the pick image: buying or building never redraws the whole area.
 
 signal drawn
+# a lot's redraw is on screen (and in the pick image)
+signal redrawn(lot: int)
 
 const PAD := 12.0
 const DIRS: Array[Vector2] = [Vector2(-1, 0), Vector2(1, 0), Vector2(0, -1), Vector2(0, 1)]
@@ -52,6 +58,14 @@ var pick: Image
 # milliseconds spent building the ops and on the GPU passes, for the logs
 var build_ms := 0
 var draw_ms := 0
+# keep what a lot redraw needs (the game); off for one-off renders
+var live := false
+# the last lot redraw: milliseconds of main-thread work (lay out, sort, record, paste) and wall
+# time until it was on screen, and the size of the rectangle redrawn
+var redraw_ms := 0
+var redraw_wall_ms := 0
+var redraw_px := Vector2i.ZERO
+var busy := false
 # the depth pass and the cast-shadow mask, for what is drawn live over the drawing; null until
 # `drawn`
 var depth_tex: Texture2D
@@ -62,6 +76,13 @@ var _radius := 0.0
 var _iso: Iso
 var _area: AreaBuilder
 var _pick_bytes := PackedByteArray()
+var _image: Image
+# the depth and shadow images behind depth_tex / shade_tex, kept so a lot redraw can patch them
+var _depth_img: Image
+var _shade_img: Image
+var _queue: Array[int] = []
+# boxes of the ground, shadow and pre ops (built on the first lot redraw)
+var _boxes := {}
 # lot -> its outline as runs of drawing pixels: [next to it, one further out]
 var _outlines := {}
 
@@ -87,6 +108,9 @@ func set_block(block: Dictionary) -> bool:
 	for plot: Dictionary in block["plots"]:
 		tallest = maxf(tallest, AreaBuilder.top_of(int(plot["built_tier"]),
 			int(plot.get("levels", 0))))
+	# in the game any lot may become a skyscraper later; leave room for the tallest one
+	if live:
+		tallest = maxf(tallest, AreaBuilder.top_of(5, 35) + 30.0)
 	var box := Rect2(_iso.p(_radius, 0.0), Vector2.ZERO)
 	for c: Vector2 in Geo.circle(_radius, 96):
 		box = box.expand(_iso.p(c.x, c.y, tallest)).expand(_iso.p(c.x, c.y,
@@ -95,6 +119,7 @@ func set_block(block: Dictionary) -> bool:
 	size = (box.size + Vector2(PAD, PAD) * 2.0).ceil()
 	focus = _iso.p(0.0, 0.0)
 	_area = AreaBuilder.new(_iso, block, active_radius)
+	_area.tags = not live
 	_area.build()
 	_area.objects = DepthSort.order(_area.objects)
 	pops = _area.pops
@@ -124,8 +149,12 @@ func _render() -> void:
 	var shade := ImageTexture.create_from_image(s.get_texture().get_image())
 	pick = p.get_texture().get_image()
 	_pick_bytes = pick.get_data()
-	depth_tex = ImageTexture.create_from_image(d.get_texture().get_image())
+	var depth_img := d.get_texture().get_image()
+	depth_tex = ImageTexture.create_from_image(depth_img)
 	shade_tex = shade
+	if live:
+		_depth_img = depth_img
+		_shade_img = s.get_texture().get_image()
 	g.queue_free()
 	s.queue_free()
 	p.queue_free()
@@ -140,9 +169,12 @@ func _render() -> void:
 	var w := _viewport(vs, under)
 	w.add_child(world)
 	await RenderingServer.frame_post_draw
-	texture = ImageTexture.create_from_image(w.get_texture().get_image())
+	_image = w.get_texture().get_image()
+	texture = ImageTexture.create_from_image(_image)
 	w.queue_free()
-	_area = null
+	if not live:
+		_area = null
+		_image = null
 	draw_ms = Time.get_ticks_msec() - t0
 	drawn.emit()
 
@@ -195,11 +227,117 @@ func roads() -> Array:
 	return _block.get("roads", [])
 
 
-func _canvas(mode: int) -> Canvas:
+func _canvas(mode: int, region: Rect2i = Rect2i(), objs: Array = []) -> Canvas:
 	var c := Canvas.new()
 	c.mode = mode
 	c.area = _area
+	if region.size != Vector2i.ZERO:
+		c.region = Rect2(region)
+		c.objs = objs
+		c.boxes = _boxes
+		c.position = -Vector2(region.position)
 	return c
+
+
+# --- one lot at a time (live mode) -----------------------------------------------------------------
+
+# lays lot `lot` out again from its plot (the caller has changed the plot: owned, tier, works)
+# and redraws it; requests queue up and run one after another
+func redraw_lot(lot: int) -> void:
+	if _area == null or lot < 0 or lot >= lots.size():
+		return
+	if not lot in _queue:
+		_queue.append(lot)
+	if busy or texture == null:
+		return
+	busy = true
+	while not _queue.is_empty():
+		await _redraw(_queue.pop_front())
+	busy = false
+
+
+static func _ri(r: Rect2) -> Rect2i:
+	var a := Vector2i(floori(r.position.x), floori(r.position.y))
+	var b := Vector2i(ceili(r.end.x), ceili(r.end.y))
+	return Rect2i(a, b - a)
+
+
+# the drawing pixels a lot covers: its ground, its objects and their shadows
+func _reach(lot: int) -> Rect2:
+	var box: Rect2 = lots[lot]["box"]
+	for pts: PackedVector2Array in _area.lot_shadows[lot]:
+		for q in pts:
+			box = box.expand(q)
+	return box
+
+
+func _redraw(lot: int) -> void:
+	var t0 := Time.get_ticks_msec()
+	if _boxes.is_empty():
+		_boxes = Canvas.op_boxes(_area)
+	var before := _reach(lot)
+	_area.rebuild_lot(lot)
+	var full := Rect2i(Vector2i.ZERO, Vector2i(size))
+	# what changed, and a margin around it so kerbs and outlines at the edge see their neighbours
+	var inner := _ri(before.merge(_reach(lot)).grow(3.0)).intersection(full)
+	var region := inner.grow(4).intersection(full)
+	if inner.size.x <= 0 or inner.size.y <= 0:
+		return
+	var objs: Array = []
+	var area_r := Rect2(region)
+	for o: Dictionary in _area.objects:
+		if (o["rect"] as Rect2).intersects(area_r):
+			objs.append(o)
+	objs = DepthSort.order(objs)
+	var g := _viewport(region.size, _canvas(MODE_GROUND, region, objs))
+	var s := _viewport(region.size, _canvas(MODE_SHADOW, region, objs))
+	var p := _viewport(region.size, _canvas(MODE_PICK, region, objs))
+	var dc := _canvas(MODE_DEPTH, region, objs)
+	dc.material = _depth_material()
+	var dv := _viewport(region.size, dc)
+	var spent := Time.get_ticks_msec() - t0
+	await RenderingServer.frame_post_draw
+	var t1 := Time.get_ticks_msec()
+	var ground := ImageTexture.create_from_image(g.get_texture().get_image())
+	var shade := ImageTexture.create_from_image(s.get_texture().get_image())
+	var pick_part := p.get_texture().get_image()
+	var depth_part := dv.get_texture().get_image()
+	var shade_part := s.get_texture().get_image()
+	g.queue_free()
+	s.queue_free()
+	p.queue_free()
+	dv.queue_free()
+	var under := Sprite2D.new()
+	under.centered = false
+	under.texture = ground
+	under.material = WorldShader.ground_material(ground, shade, focus - Vector2(region.position),
+		Iso.S, active_radius if active_radius > 0.0 else 1.0e9, region.position)
+	var world := _canvas(MODE_WORLD, region, objs)
+	world.material = WorldShader.facade_material(Sprites.atlas())
+	var w := _viewport(region.size, under)
+	w.add_child(world)
+	spent += Time.get_ticks_msec() - t1
+	await RenderingServer.frame_post_draw
+	var t2 := Time.get_ticks_msec()
+	var part := w.get_texture().get_image()
+	w.queue_free()
+	var src := Rect2i(inner.position - region.position, inner.size)
+	_image.blit_rect(part, src, inner.position)
+	(texture as ImageTexture).update(_image)
+	pick.blit_rect(pick_part, src, inner.position)
+	_pick_bytes = pick.get_data()
+	# what Traffic hides its cars behind, and the shadows it darkens them in
+	if _depth_img != null:
+		_depth_img.blit_rect(depth_part, src, inner.position)
+		(depth_tex as ImageTexture).update(_depth_img)
+		_shade_img.blit_rect(shade_part, src, inner.position)
+		(shade_tex as ImageTexture).update(_shade_img)
+	_outlines.clear()
+	spent += Time.get_ticks_msec() - t2
+	redraw_ms = spent
+	redraw_wall_ms = Time.get_ticks_msec() - t0
+	redraw_px = inner.size
+	redrawn.emit(lot)
 
 
 # where a ground point (metres) lands in the drawing, for labels drawn over it
@@ -340,21 +478,69 @@ class Canvas:
 
 	var mode := 0
 	var area: AreaBuilder
+	# a lot redraw: only this rectangle of the drawing, with these objects (in painter's order)
+	var region := Rect2()
+	var objs: Array = []
+	var boxes := {}
+
+	# the drawing boxes of the ground, shadow and pre ops, so a region skips what it cannot see
+	static func op_boxes(a: AreaBuilder) -> Dictionary:
+		var out := {"ground": [], "shadows": [], "pre": []}
+		for op: Array in a.ground:
+			out["ground"].append(_box_of(op))
+		for pts: PackedVector2Array in a.shadows:
+			out["shadows"].append(_pts_box(pts))
+		for op: Array in a.pre:
+			out["pre"].append(_box_of(op))
+		return out
+
+	static func _box_of(op: Array) -> Rect2:
+		match op[0]:
+			Painter.OP_POLY, Painter.OP_WALL:
+				return _pts_box(op[1]).grow(3.0)
+			Painter.OP_RECT:
+				return op[1]
+		return Rect2(-1e6, -1e6, 2e6, 2e6)
+
+	static func _pts_box(pts: PackedVector2Array) -> Rect2:
+		if pts.is_empty():
+			return Rect2()
+		var r := Rect2(pts[0], Vector2.ZERO)
+		for q in pts:
+			r = r.expand(q)
+		return r
+
+	func _sees(r: Rect2) -> bool:
+		return region.size == Vector2.ZERO or r.intersects(region)
+
+	func _lot_seen(i: int) -> bool:
+		return region.size == Vector2.ZERO or (area.lots[i]["box"] as Rect2).intersects(region) \
+			or _pts_box(area.lots[i]["screen"]).intersects(region)
 
 	func _draw() -> void:
+		var whole := region.size == Vector2.ZERO
 		match mode:
 			MODE_GROUND:
-				for op: Array in area.ground:
-					_op(op, Vector2.ZERO, 0)
+				for k in area.ground.size():
+					if whole or _sees(boxes["ground"][k]):
+						_op(area.ground[k], Vector2.ZERO, 0)
+				for i in area.lot_ground.size():
+					if _lot_seen(i):
+						for op: Array in area.lot_ground[i]:
+							_op(op, Vector2.ZERO, 0)
 			MODE_SHADOW:
-				for pts: PackedVector2Array in area.shadows:
-					if Geometry2D.triangulate_polygon(pts).is_empty():
-						continue
-					draw_colored_polygon(pts, Color.WHITE)
+				for k in area.shadows.size():
+					if whole or _sees(boxes["shadows"][k]):
+						_shadow_poly(area.shadows[k])
+				for list: Array in area.lot_shadows:
+					for pts: PackedVector2Array in list:
+						if whole or _sees(_pts_box(pts)):
+							_shadow_poly(pts)
 			MODE_WORLD:
-				for op: Array in area.pre:
-					_op(op, Vector2.ZERO, 1)
-				for obj: Dictionary in area.objects:
+				for k in area.pre.size():
+					if whole or _sees(boxes["pre"][k]):
+						_op(area.pre[k], Vector2.ZERO, 1)
+				for obj: Dictionary in (area.objects if whole else objs):
 					if obj["outline"]:
 						for d in DIRS:
 							for op: Array in obj["ops"]:
@@ -367,9 +553,11 @@ class Canvas:
 			MODE_PICK:
 				for i in area.lots.size():
 					var pts: PackedVector2Array = area.lots[i]["screen"]
+					if not _lot_seen(i):
+						continue
 					if pts.size() >= 3 and not Geometry2D.triangulate_polygon(pts).is_empty():
 						draw_colored_polygon(pts, _lot_code(i))
-				for obj: Dictionary in area.objects:
+				for obj: Dictionary in (area.objects if whole else objs):
 					var lot: int = obj["lot"]
 					if lot < 0:
 						continue
@@ -381,7 +569,7 @@ class Canvas:
 						for op: Array in obj["ops"]:
 							_pick_op(op, d, code)
 			MODE_DEPTH:
-				for obj: Dictionary in area.objects:
+				for obj: Dictionary in (area.objects if whole else objs):
 					var key: float = obj["key"]
 					# loose pixels (roof lines, antennas) of a building take its walls' and
 					# roofs' depth, which is exact; only a thing made of nothing else draws them
@@ -398,6 +586,10 @@ class Canvas:
 						_depth_op(op, Vector2.ZERO, key, solid, false)
 				for op: Array in area.post:
 					_depth_op(op, Vector2.ZERO, DEPTH_FRONT, false, false)
+
+	func _shadow_poly(pts: PackedVector2Array) -> void:
+		if not Geometry2D.triangulate_polygon(pts).is_empty():
+			draw_colored_polygon(pts, Color.WHITE)
 
 	# how: 0 palette codes (ground pass), 1 colour, 2 faded, 3 ink silhouette
 	func _op(op: Array, off: Vector2, how: int) -> void:

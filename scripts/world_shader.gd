@@ -304,6 +304,8 @@ uniform sampler2D ground_tex : filter_nearest;
 uniform vec2 origin;
 uniform float scale;
 uniform float active;
+// where this texture's pixel (0, 0) sits in the whole drawing (a lot redraw draws a piece)
+uniform vec2 offset;
 
 bool is_pave(int idx) { return idx == PAVE || idx == PAVE_D; }
 
@@ -317,11 +319,12 @@ void fragment() {
 	int idx = at(p);
 	if (idx < 0) discard;
 	vec2 c = vec2(p) + 0.5 - origin;
+	ivec2 q = p + ivec2(offset);
 	float a = c.x / scale;
 	float b = 2.0 * c.y / scale;
 	float u = (a + b) * 0.5;
 	float v = (b - a) * 0.5;
-	float hn = h01(p.x, p.y, 5, 9);
+	float hn = h01(q.x, q.y, 5, 9);
 	int was = idx;
 	if (idx == PAVE) {
 		bool odd = mod(floor(u / 3.0) + floor(v / 3.0), 2.0) < 0.5;
@@ -334,7 +337,7 @@ void fragment() {
 		else if (hn > 0.92) idx = GRASS_D;
 	} else if (idx == CYAN_D) {
 		// water: short ripples along the iso axis
-		if (h01(p.x / 3, p.y, 6, 2) < 0.06) idx = CYAN_M;
+		if (h01(q.x / 3, q.y, 6, 2) < 0.06) idx = CYAN_M;
 	}
 	// kerbs: the pavement pixel just above the asphalt catches the light, the asphalt just below
 	// the pavement is in its shade
@@ -376,7 +379,7 @@ static func facade_material(atlas: Texture2D) -> ShaderMaterial:
 
 
 static func ground_material(ground: Texture2D, mask: Texture2D, origin: Vector2,
-		scale: float, active: float) -> ShaderMaterial:
+		scale: float, active: float, offset: Vector2i = Vector2i.ZERO) -> ShaderMaterial:
 	if _ground == null:
 		_ground = Shader.new()
 		_ground.code = "shader_type canvas_item;\nrender_mode blend_disabled;\n" + _header() \
@@ -389,4 +392,5 @@ static func ground_material(ground: Texture2D, mask: Texture2D, origin: Vector2,
 	m.set_shader_parameter("origin", origin)
 	m.set_shader_parameter("scale", scale)
 	m.set_shader_parameter("active", active if active > 0.0 else 1.0e9)
+	m.set_shader_parameter("offset", Vector2(offset))
 	return m

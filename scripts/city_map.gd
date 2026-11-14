@@ -124,7 +124,7 @@ func pick_latlon(lat: float, lon: float) -> void:
 
 
 func confirm() -> void:
-	if _pending != Vector2.INF:
+	if _pending != Vector2.INF and app.game.can_open_office() == "":
 		var ll := _latlon(_pending)
 		app.place_office(city["id"], ll.x, ll.y, place_name(_pending))
 
@@ -292,11 +292,18 @@ func _draw_confirm() -> void:
 	var name := place_name(_pending)
 	Ui.text(_over, BOX.position + Vector2(20, 42), "¿Abrir una oficina en %s?" % name, Ui.TEXT,
 		Ui.CREAM, Ui.NARROW)
-	Ui.text(_over, BOX.position + Vector2(20, 72),
-		"Se descarga una vez lo que hay a %d m" % roundi(Rules.MAX_RADIUS), Ui.SMALL, Ui.MUTED,
-		Ui.TEN)
+	var why := app.game.can_open_office()
+	var cost := app.game.next_office_cost()
+	var line := "Se descarga una vez lo que hay a %d m" % roundi(Rules.MAX_RADIUS)
+	if why != "":
+		line = why
+	elif cost > 0.0:
+		line = "Cuesta %s · se descarga lo que hay a %d m" % [Economy.money(cost),
+			roundi(Rules.MAX_RADIUS)]
+	Ui.text(_over, BOX.position + Vector2(20, 72), line, Ui.SMALL,
+		Ui.BLOOD if why != "" else Ui.MUTED, Ui.TEN)
 	Ui.button(_over, CANCEL, "Cancelar", hot)
-	Ui.button(_over, OPEN, "Abrir oficina", hot, true)
+	Ui.button(_over, OPEN, "Abrir oficina", hot, why == "", why != "")
 
 
 # a pixel circle on the 2x grid; dashed for offices, solid for the cursor
