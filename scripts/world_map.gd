@@ -17,6 +17,8 @@ const ZOOM_OUT := Rect2(536, 146, 52, 52)
 const LIST_BTN := Rect2(536, 212, 52, 52)
 const MONEY_AT := Vector2(588, 40)
 const STEP_MAX := World.STEPS - 1
+# the farthest step still fills the window from top to bottom (the x1 picture is half its height)
+const STEP_MIN := 1
 # a marker's hit box (canvas px, at least Ui.MIN_HIT) round its point, a little above it where
 # the pin stands; groups keep their points HIT apart on one axis at least, so boxes never overlap
 const HIT := 48.0
@@ -44,7 +46,7 @@ const PIN: Array[String] = [
 const DOT: Array[String] = [".11.", "1111", "1111", ".11."]
 
 # kept for the session: the zoom step and the map point in the middle of the view (0..1)
-static var _level := 0
+static var _level := STEP_MIN
 static var _mid := Vector2(0.5, 0.42)
 
 var _sprite: Sprite2D
@@ -102,12 +104,18 @@ func _collect() -> void:
 
 # --- coordinates -------------------------------------------------------------------------------
 
+# the map always covers the whole window, under the header and the footer
 static func _view() -> Rect2:
-	return Rect2(0, MAP_TOP, Ui.CANVAS.x, MAP_BOTTOM - MAP_TOP)
+	return Rect2(Vector2.ZERO, Ui.CANVAS)
 
 
 static func _view_mid() -> Vector2:
-	return _view().get_center()
+	return _band().get_center()
+
+
+# where markers live and answer clicks: the map between the header bar and the footer
+static func _band() -> Rect2:
+	return Rect2(0, MAP_TOP, Ui.CANVAS.x, MAP_BOTTOM - MAP_TOP)
 
 
 func _size() -> Vector2:
@@ -180,7 +188,7 @@ func spot_of(city_id: String) -> Vector2:
 		for m: int in g["members"]:
 			if _places[m]["city"]["id"] == city_id:
 				var at := _pan + (g["at"] as Vector2) + Vector2(0, -8)
-				return at if _view().has_point(at) else Vector2.INF
+				return at if _band().has_point(at) else Vector2.INF
 	return Vector2.INF
 
 
@@ -255,7 +263,7 @@ func hover(at: Vector2) -> void:
 
 func wheel(at: Vector2, steps: int) -> void:
 	if _rows.is_empty():
-		_set_level(_level + steps, at if _view().has_point(at) else _view_mid())
+		_set_level(_level + steps, at if _band().has_point(at) else _view_mid())
 
 
 func back() -> bool:
@@ -267,7 +275,7 @@ func back() -> bool:
 
 
 func _set_level(i: int, around: Vector2) -> void:
-	i = clampi(i, 0, STEP_MAX)
+	i = clampi(i, STEP_MIN, STEP_MAX)
 	var u := _mid if _sprite.texture == null else _unit_at(around)
 	if _sprite.texture == null:
 		around = _view_mid()
@@ -415,9 +423,9 @@ func _draw_hud() -> void:
 			app.game.income()), Ui.SMALL, Ui.MINT)
 	Ui.header(_over, "Tiny Realtor", false, hot, MONEY_AT.x - w - 40)
 	Ui.arrow(_over, ZOOM_IN, "+", hot, _level == STEP_MAX)
-	Ui.arrow(_over, ZOOM_OUT, "-", hot, _level == 0)
+	Ui.arrow(_over, ZOOM_OUT, "-", hot, _level == STEP_MIN)
 	_draw_list_button()
-	Ui.footer(_over, "NATURAL EARTH  ZOOM X%d" % (1 << _level))
+	Ui.footer(_over, "NATURAL EARTH  ZOOM X%d" % (1 << (_level - STEP_MIN)))
 
 
 # a steel square with three pixel lines: the plain list of cities
@@ -434,7 +442,7 @@ func _draw_list_button() -> void:
 
 func _draw_group(g: Dictionary, lit: bool) -> void:
 	var at: Vector2 = _pan + (g["at"] as Vector2)
-	if not _view().grow(24).has_point(at):
+	if not _band().has_point(at):
 		return
 	var members: Array = g["members"]
 	var offices := 0

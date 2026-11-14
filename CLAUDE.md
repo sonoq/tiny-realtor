@@ -80,8 +80,10 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   from `assets/world/world_<level>.png` (4 pictures baked by `tools/build_world.gd`, each art
   pixel 2x2 on screen), Miller projection cropped 84 N .. ~58 S so the map is exactly 2:1
   (`World.unit` / `lat_at` / `lon_at`). Zoom steps x1 x2 x4 x8 x16 (`World.STEPS`; x16 shows
-  the x8 picture at 4x4, `texture_level`), drag pans (the map covers the view where it is
-  bigger, else sits centred), wheel / - + zoom; the zoom and the view's middle are static, kept
+  the x8 picture at 4x4, `texture_level`); the screen starts at `WorldMap.STEP_MIN` (1), the
+  farthest step whose map is as tall as the window, so the map always covers the whole window
+  (under the header and footer; markers and clicks stay in the band between them, `_band`;
+  the footer counts zoom from that step as X1), drag pans, wheel / - + zoom; the zoom and the view's middle are static, kept
   for the session. Markers drawn live: a cream dot per `CityDb` city, a gold pin (the office
   view's pin sprite, `WorldMap.pin`) with the office count where the player has offices, and
   markers closer than `HIT` (48, >= MIN_HIT) on both axes grouped (`World.clusters`, offices'

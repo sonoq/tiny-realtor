@@ -389,7 +389,7 @@ func _world(n: int) -> bool:
 	await _frames(2)
 	# Valencia is in the big European group at x1: a click zooms in on the group
 	world.click(world.spot_of("valencia"))
-	if world.level() == 0:
+	if world.level() == WorldMap.STEP_MIN:
 		_fail("clicking a big group did not zoom in")
 		return false
 	if not Store.offices_in(VALENCIA["city"]).is_empty():
