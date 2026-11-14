@@ -179,7 +179,8 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
 
 **Traffic** (moving cars over the office drawing; `docs/screenshots/traffic/`)
 - `road_net.gd` (`RoadNet`) - the area's roads (pedestrian streets aside) as lanes: lines split
-  where they cross or touch (`_split_crossings`), junctions under `MERGE` (8 m) apart merged;
+  where they cross or touch (`_split_crossings`), junctions under `MERGE` (8 m) apart or whose
+  boxes overlap merged;
   a two-way edge gets one lane each way (two on 18 m+ avenues), a one-way edge (`oneway`) one
   to three lanes its way, right-hand (left-hand for `Traffic.LEFT_HAND` countries); each lane
   is pulled back from its junctions until clear of every street meeting it at an angle
@@ -188,7 +189,8 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   asphalt, made lazily (`connector(a, b)`); `conflict(c1, c2)` = they pass within 2.4 m (two
   from the same lane never conflict). `choose()` picks the next lane: no U-turn unless a dead
   end, no hairpins or "rough" curves, avenues and straight on preferred. A one-way street with
-  no way out (the disc's edge) is an exit. Lanes and connectors are "paths" (polyline + running
+  no way out is never chosen; at the disc's edge a street with no way on is an exit (the car
+  drives off the world). Lanes and connectors are "paths" (polyline + running
   length) in one index space, lanes first; `CRUISE` / `DENSITY` / `PULL` per street kind.
 - `traffic.gd` (`Traffic`, a Node2D child of OfficeView's sprite, so it draws in drawing pixels
   at the view's zoom) - up to `CAP` (80) vehicles, struct-of-arrays, simulated at `TICK`
@@ -196,26 +198,29 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   where everyone is (cruise x a per-car pace, braking into the next connector's speed, gap to
   the car ahead on the path / next two paths, `_sense` for cars ahead on other paths where
   streets merge), then everyone moves. Junctions: a car within `LOOK` of its kerb line asks
-  (every 3rd tick) for its connector: clear of every reserved conflicting connector, nobody
-  waiting longer for a conflicting one, nothing standing along it (`_swept_clear`), room on
-  the street beyond; when that street is too short to wait on, the next junction is reserved
-  in the same go (`nxt2`). Safeguards (`_would_hit`, `_into_way`) keep footprints apart in odd
+  (every 3rd tick) for its connector: never before the car in front on its lane, nothing
+  standing along it (`_swept_clear`; while something does the car is `held` and the others do
+  not give way to it), clear of every reserved conflicting connector, nobody free to go
+  waiting longer for a conflicting one, room on the street beyond; when that street is too
+  short to wait on, the next junction is reserved in the same go (`nxt2`). Safeguards (`_would_hit`, `_into_way`) keep footprints apart in odd
   geometry; who waits for whose junction decides who gives way, so it never deadlocks.
   Cars gather around the view (`set_view`): the target count is the lanes' density within
   reach of the view's corners; a car far out of reach (or stuck 40 s) and out of sight is
-  removed, new ones start out of sight (`populate()` fills and settles 6 s at the start).
+  removed, new ones start out of sight on lanes near the view (`populate()` fills and settles
+  6 s at the start). Redrawn at most 30 times a second (`DRAW_EVERY`).
   All choices from one RandomNumberGenerator seeded by the office id. Brake lights while
   slowing. Drawn as one `canvas_item_add_triangle_array` (preallocated quads) through its car
   shader: atlas index -> palette, the pixel hidden where the depth pass holds something more
-  than `HIDE_TOL` (1.5 m) nearer than the car's middle, faded beyond the active radius and
-  darkened in cast shadows via the palette's tables (`blend_disabled`, never off-palette).
+  than `HIDE_TOL` (1.5 m) nearer than the car's middle, faded when the car's middle is beyond
+  the active radius and darkened per pixel in cast shadows, via the palette's tables
+  (`blend_disabled`, never off-palette).
   `frozen` + `run(n)` let tools step it.
 - `car_sprites.gd` (`CarSprites`) - the vehicles (5 car colours, taxi, 2 vans, bus) in 16
   headings, with and without brake lights, drawn once per session with Painter + the facade
   shader + ink outline like AreaBuilder's parked cars, read back to palette indices.
-- AreaBuilder keeps static cars only parked at the kerb of 12-18 m streets (narrower ones have
-  no room beside the moving lane, wider ones a second lane); BlockBaker keeps each road's
-  `oneway`.
+- AreaBuilder keeps static cars only parked at the kerb: both kerbs of 12-18 m streets (whose
+  lanes sit at 0.22 of the width from the middle), one kerb of 8.5-10 m one-way streets (one
+  lane down the middle); BlockBaker keeps each road's `oneway`.
 
 ## Style A (the look, and the rules that keep it)
 

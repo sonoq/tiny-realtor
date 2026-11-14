@@ -78,6 +78,9 @@ func _check(block: Dictionary, label: String, minutes: float) -> void:
 		usec += traffic.tick_usec
 		for i in traffic.count:
 			moved += traffic.v[i] * Traffic.TICK
+			if traffic.stuck[i] > STUCK_MAX and worst_stuck <= STUCK_MAX:
+				print("  %s: car %d stuck at %s (tick %d): %s" % [label, i, traffic.pos[i], k,
+					_where(traffic, i)])
 			worst_stuck = maxf(worst_stuck, traffic.stuck[i])
 		if k + 1 == mark:
 			early = _state(traffic)

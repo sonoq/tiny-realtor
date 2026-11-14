@@ -30,6 +30,8 @@ enum { MODE_GROUND, MODE_SHADOW, MODE_WORLD, MODE_PICK, MODE_DEPTH }
 const DEPTH_BIAS := 1024.0
 const DEPTH_K := 16.0
 const DEPTH_TOP := 65535
+# the depth handed to the depth pass for what stands in front of everything
+const DEPTH_FRONT := 1.0e5
 
 # pixel size of the whole drawing
 var size := Vector2.ZERO
@@ -395,7 +397,7 @@ class Canvas:
 					for op: Array in obj["ops"]:
 						_depth_op(op, Vector2.ZERO, key, solid, false)
 				for op: Array in area.post:
-					_depth_op(op, Vector2.ZERO, INF, false, false)
+					_depth_op(op, Vector2.ZERO, DEPTH_FRONT, false, false)
 
 	# how: 0 palette codes (ground pass), 1 colour, 2 faded, 3 ink silhouette
 	func _op(op: Array, off: Vector2, how: int) -> void:
@@ -452,7 +454,8 @@ class Canvas:
 				draw_rect(Rect2(op[2] + sp[1] + off, sp[2]), code)
 
 	# an op in the depth pass: polygons and walls carry their ground points' depth (Painter),
-	# sprites and loose pixels use the object's middle (`key`); INF = in front of everything
+	# sprites and loose pixels use the object's middle (`key`); DEPTH_FRONT and beyond = in
+	# front of everything
 	func _depth_op(op: Array, off: Vector2, key: float, solid: bool, ink: bool) -> void:
 		match op[0]:
 			Painter.OP_POLY:
@@ -486,7 +489,7 @@ class Canvas:
 					r.end, Vector2(r.position.x, r.end.y)]), PackedColorArray([Color.WHITE]),
 					PackedVector2Array([k, k, k, k]))
 			Painter.OP_TEX:
-				var c := DEPTH_TOP if key == INF else BlockView.depth_code(key)
+				var c := DEPTH_TOP if key >= DEPTH_FRONT else BlockView.depth_code(key)
 				var sp := Sprites.get_sprite(op[1])
 				var r := Rect2(op[2] + sp[1] + off, sp[2])
 				var a := Rect2(Sprites.atlas_rect(op[1]))

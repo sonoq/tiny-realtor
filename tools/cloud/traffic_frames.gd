@@ -192,20 +192,25 @@ func _bench(view: OfficeView, traffic: Traffic, seconds: float) -> void:
 		n += 1
 	print("BENCH step %.3f ms per tick (%d cars), %.2f%% of a core at %d Hz" % [cpu / 1000.0 / n,
 		traffic.count, cpu / 1000.0 / n / Traffic.TICK / 10.0, roundi(1.0 / Traffic.TICK)])
+	# the per-frame part: a minute of frames at 60 fps, the simulation ticks included
+	traffic.frozen = false
+	var t1 := Time.get_ticks_usec()
+	for i in 3600:
+		traffic._process(1.0 / 60.0)
+	print("BENCH frame update %.3f ms per frame at 60 fps (ticks and redraws included)" % [
+		(Time.get_ticks_usec() - t1) / 1000.0 / 3600.0])
 	for mode in 2:
 		traffic.visible = mode == 1
 		traffic.frozen = mode == 0
 		await _frames(10)
 		var frames := 0
-		var proc := 0.0
 		var t0 := Time.get_ticks_usec()
 		while Time.get_ticks_usec() - t0 < seconds * 1.0e6:
 			await process_frame
 			frames += 1
-			proc += Performance.get_monitor(Performance.TIME_PROCESS)
 		var ms := (Time.get_ticks_usec() - t0) / 1000.0 / frames
-		print("BENCH traffic %s: %.2f ms per frame (%d frames), process %.3f ms per frame" % [
-			"on " if mode == 1 else "off", ms, frames, proc * 1000.0 / frames])
+		print("BENCH traffic %s: %.2f ms per frame (%d frames, llvmpipe, fps uncapped)" % [
+			"on " if mode == 1 else "off", ms, frames])
 	Engine.max_fps = 60
 
 

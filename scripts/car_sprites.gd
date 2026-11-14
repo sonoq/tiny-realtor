@@ -100,17 +100,22 @@ static func _index(img: Image, rows: int) -> void:
 	hi.resize(rows * HEADINGS)
 	lo.fill(Vector2i(9999, 9999))
 	hi.fill(Vector2i(-1, -1))
+	var miss := 0
 	for y in img.get_height():
 		for x in w:
 			var k := (y * w + x) * 4
 			if src[k + 3] < 128:
 				continue
 			var rgba := (src[k] << 24) | (src[k + 1] << 16) | (src[k + 2] << 8) | 0xFF
+			if not lookup.has(rgba):
+				miss += 1
 			out[k] = int(lookup.get(rgba, 0))
 			out[k + 3] = 255
 			var cell := (y / CELL.y) * HEADINGS + x / CELL.x
 			lo[cell] = lo[cell].min(Vector2i(x, y))
 			hi[cell] = hi[cell].max(Vector2i(x, y))
+	if miss > 0:
+		push_error("CarSprites: %d pixels off the palette" % miss)
 	rects.clear()
 	offsets.clear()
 	for cell in rows * HEADINGS:

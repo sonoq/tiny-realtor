@@ -12,9 +12,11 @@ extends RefCounted
 # "paths": a polyline with its running length, all in ground metres, indexed together (lanes
 # first).
 
+# nodes are matched on a half-metre grid: the bake snaps to 10 cm and welds at 0.5 m
 const KEY := 2.0
 # junctions closer than this (m, along the street between them) are one
 const MERGE := 8.0
+# grid cell (m) of the street segments that keep junction curves on the road
 const ROAD_CELL := 20.0
 # lane offset never closer to the middle line than this (m)
 const LANE_MIN := 1.4
@@ -65,6 +67,8 @@ var _edges: Array[Dictionary] = []
 var _conn := {}
 var _conflict := {}
 var _trims := {}
+# node -> the edges that end at it
+var _at_node := {}
 # connectors that leave the street, taken only when there is no other way
 var _rough := {}
 # the street segments by grid cell, [a, b, half width], to keep junction curves on the road
@@ -79,7 +83,7 @@ func build(roads: Array, left_hand: bool, radius: float) -> void:
 	for road: Dictionary in roads:
 		if road.get("kind", "") == "pedestrian":
 			continue
-		var line := AreaBuilder._pts(road["line"])
+		var line := _line(road["line"])
 		if line.size() < 2:
 			continue
 		lines.append(line)
@@ -181,27 +185,31 @@ func choose(lane: int, rng: RandomNumberGenerator) -> int:
 	var outs := out_lanes[n]
 	var din := direction(lane, pts[lane].size() - 2)
 	var total := 0.0
-	for pass_i in 2:
-		var pick := rng.randf() * total if pass_i == 1 else 0.0
+	for m in outs:
+		total += _weight(lane, m, din)
+	if total > 0.0:
+		var pick := rng.randf() * total
+		var last := -1
 		for m in outs:
-			var w := _weight(lane, m, din, outs.size())
-			if pass_i == 0:
-				total += w
-			else:
-				pick -= w
-				if pick <= 0.0 and w > 0.0:
-					return m
-		if total <= 0.0:
-			break
-	# a dead end: back the other way, or nowhere (-1)
+			var w := _weight(lane, m, din)
+			if w <= 0.0:
+				continue
+			last = m
+			pick -= w
+			if pick <= 0.0:
+				return m
+		return last
+	# a dead end: off the world at the disc's edge, else back the other way (or nowhere, -1)
+	if node_rim[n] == 1:
+		return -1
 	for m in outs:
 		return m
 	return -1
 
 
-func _weight(lane: int, m: int, din: Vector2, n_out: int) -> float:
-	if src[m] == src[lane] and dst[m] != dst[lane] \
-			and n_out > (_edges[src[m]]["offsets"] as Array).size():
+func _weight(lane: int, m: int, din: Vector2) -> float:
+	# never into a street with no way out (a one-way street ending inside the disc)
+	if out_lanes[to_node[m]].is_empty() and node_rim[to_node[m]] == 0:
 		return 0.0
 	var w: float = PULL.get(kind[m], 1.0)
 	var turn := din.dot(direction(m, 0))
@@ -360,15 +368,16 @@ static func _lane_offsets(width: float, oneway: bool) -> Array[float]:
 		if width < 10.0:
 			return [0.0]
 		if width < 18.0:
-			return [width * 0.25, -width * 0.25]
+			return [width * 0.22, -width * 0.22]
 		return [width * 0.375, 0.0, -width * 0.375]
 	if width >= 18.0:
 		return [width * 0.375, maxf(LANE_MIN, width * 0.125)]
-	return [maxf(LANE_MIN, width * 0.25)]
+	# a little in from the lane's middle, to leave AreaBuilder's parked cars room at the kerb
+	return [maxf(LANE_MIN, width * 0.22)]
 
 
-# junctions a few metres apart (a kink where two streets meet, mapping noise) are one: the bit of
-# street between them, and any other between the same two, goes
+# junctions a few metres apart (a kink where two streets meet, mapping noise) or whose boxes
+# overlap are one: the bit of street between them, and any other between the same two, goes
 func _merge_close() -> void:
 	var merged := true
 	while merged:
@@ -377,7 +386,11 @@ func _merge_close() -> void:
 			var edge: Dictionary = _edges[e]
 			var a: int = edge["a"]
 			var b: int = edge["b"]
-			if a == b or node_deg[a] < 2 or node_deg[b] < 2 or _len(edge["pts"]) >= MERGE:
+			if a == b or node_deg[a] < 2 or node_deg[b] < 2:
+				continue
+			var l := _len(edge["pts"])
+			# or so close that the street between is all junction (their boxes overlap)
+			if l >= MERGE and l - _trim_at(a, e) - _trim_at(b, e) >= 1.0:
 				continue
 			var keep: Array[Dictionary] = []
 			for o: Dictionary in _edges:
@@ -396,9 +409,12 @@ func _merge_close() -> void:
 			node_pos[a] = (node_pos[a] + node_pos[b]) * 0.5
 			node_deg[a] += node_deg[b]
 			node_deg[b] = 0
+			_at_node.clear()
+			_trims.clear()
 			merged = true
 			break
 	_at_node.clear()
+	_trims.clear()
 
 
 # streets that cross (or end on another) without sharing a point get one there, so every
@@ -557,8 +573,6 @@ static func _distance(q: Vector2, line: PackedVector2Array) -> float:
 	return best
 
 
-var _at_node := {}
-
 
 func _edges_at(n: int) -> PackedInt32Array:
 	if _at_node.is_empty():
@@ -638,6 +652,13 @@ static func _trim(line: PackedVector2Array, t0: float, t1: float) -> PackedVecto
 		var d := (line[line.size() - 1] - line[0]).normalized()
 		var c := line[0].lerp(line[line.size() - 1], 0.5)
 		out = PackedVector2Array([c - d * 0.1, c + d * 0.1])
+	return out
+
+
+static func _line(raw: Array) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for q: Array in raw:
+		out.append(Vector2(q[0], q[1]))
 	return out
 
 

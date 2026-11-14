@@ -29,11 +29,19 @@ const GAP := 1.6
 const LOOK := 10.0
 # depth a building must stand in front of a car's middle to hide it (m)
 const HIDE_TOL := 1.5
+# seconds simulated before the first frame, so queues have formed at the junctions
 const WARMUP := 6.0
 # a car further than this from the view's middle (beyond its corners) may be swapped out (m)
 const REGION_PAD := 20.0
+# art pixels round the view where a car still counts as in sight (half a bus)
 const SPRITE_PAD := 24.0
+# grid cell (m) for finding cars near a car: bigger than a car's look ahead
 const CELL := 12.0
+# seconds between redraws of the moving cars
+const DRAW_EVERY := 1.0 / 30.0
+# a footprint's half width, and how much shorter it counts than the car (m)
+const HALF_W := 0.85
+const SHRINK := 0.15
 # a car in front within this much to either side is in the way, whatever its path (m)
 const SENSE_SIDE := 2.1
 # countries that drive on the left (CityDb's names)
@@ -61,6 +69,7 @@ var nxt := PackedInt32Array()
 # to wait on: -1 not planned yet, -2 none needed
 var nxt2 := PackedInt32Array()
 var granted := PackedByteArray()
+var held := PackedByteArray()
 var braking := PackedByteArray()
 var wait := PackedFloat32Array()
 var stuck := PackedFloat32Array()
@@ -98,6 +107,10 @@ var _waiting := PackedInt32Array()
 var _wait_count := 0
 # drawing
 var _ready_to_draw := false
+var _attached := false
+# beyond this distance (m) from the office a car is drawn faded
+var _active := 1.0e9
+var _since_draw := 0.0
 var _px := PackedVector2Array()
 var _drawn := PackedVector2Array()
 var _order := PackedInt32Array()
@@ -106,7 +119,9 @@ var _quad_uv := PackedVector2Array()
 var _quad_col := PackedColorArray()
 var _quad_idx := PackedInt32Array()
 var _spawn_w := PackedFloat32Array()
-var _spawn_total := 0.0
+# lanes that reach into the view's surroundings, where new cars start
+var _near := PackedInt32Array()
+var _near_total := 0.0
 var _adv := PackedFloat32Array()
 var _exit := PackedByteArray()
 
@@ -132,6 +147,7 @@ func setup(block: Dictionary, origin: Vector2, seed_key: String) -> void:
 	size.resize(CAP)
 	pace.resize(CAP)
 	granted.resize(CAP)
+	held.resize(CAP)
 	braking.resize(CAP)
 	pos.resize(CAP)
 	prev.resize(CAP)
@@ -162,12 +178,11 @@ func setup(block: Dictionary, origin: Vector2, seed_key: String) -> void:
 	_waiting.resize(CAP)
 	# lanes long enough to start on, weighted by how busy their street is
 	_spawn_w.resize(net.lane_count)
-	_spawn_total = 0.0
 	for l in net.lane_count:
 		_spawn_w[l] = net.length[l] * net.density[l] if net.length[l] >= LOOK + 6.0 else 0.0
-		_spawn_total += _spawn_w[l]
-	if _view.size == Vector2.ZERO:
-		set_view(Rect2(origin - Vector2(150, 150), Vector2(300, 300)))
+	_have_view = false
+	set_view(_view if _view.size != Vector2.ZERO
+		else Rect2(origin - Vector2(150, 150), Vector2(300, 300)))
 
 
 # the part of the drawing the window shows (drawing pixels); cars gather around it
@@ -187,9 +202,15 @@ func set_view(rect: Rect2) -> void:
 	_centre = c
 	_reach = far * 0.85 + REGION_PAD
 	var want := 0.0
+	_near.clear()
+	_near_total = 0.0
 	for l in net.lane_count:
-		if net.mid[l].distance_to(_centre) < _reach:
-			want += net.length[l] * net.density[l] / 100.0
+		if net.mid[l].distance_to(_centre) < _reach + net.length[l] * 0.5:
+			if net.mid[l].distance_to(_centre) < _reach:
+				want += net.length[l] * net.density[l] / 100.0
+			if _spawn_w[l] > 0.0:
+				_near.append(l)
+				_near_total += _spawn_w[l]
 	target = clampi(roundi(want), 6 if want > 3.0 else 0, CAP)
 
 
@@ -209,11 +230,9 @@ func populate() -> void:
 func attach(view: BlockView, active_radius: float) -> void:
 	material = _material(view, active_radius)
 	populate()
-	await CarSprites.build(self)
-	(material as ShaderMaterial).set_shader_parameter("atlas", CarSprites.atlas)
-	_ready_to_draw = true
-	_acc = 0.0
-	queue_redraw()
+	# drawn under the root (it outlives this screen); _process waits for it
+	CarSprites.build(get_tree().root)
+	_attached = true
 
 
 # n ticks at once, drawn where they end; for tools that shoot frames at set times
@@ -231,9 +250,17 @@ func is_drawing() -> bool:
 
 
 func _process(delta: float) -> void:
-	if not _ready_to_draw or frozen:
+	if not _ready_to_draw:
+		if not _attached or CarSprites.atlas == null:
+			return
+		(material as ShaderMaterial).set_shader_parameter("atlas", CarSprites.atlas)
+		_ready_to_draw = true
+		_acc = 0.0
+		queue_redraw()
+	if frozen:
 		return
 	_acc += delta
+	_since_draw += delta
 	var n := 0
 	while _acc >= TICK and n < 4:
 		step()
@@ -241,6 +268,10 @@ func _process(delta: float) -> void:
 		n += 1
 	if n == 4:
 		_acc = 0.0
+	# whole-pixel steps look the same redrawn 30 times a second as 60
+	if _since_draw < DRAW_EVERY:
+		return
+	_since_draw = 0.0
 	var t := _acc / TICK
 	var moved := n > 0
 	for i in count:
@@ -350,10 +381,12 @@ func _drive(i: int) -> float:
 func _gap(i: int) -> float:
 	var p := path[i]
 	var best := INF
+	var nearest := INF
 	var j := _first[p]
 	while j >= 0:
-		if j != i and s[j] > s[i] and s[j] - s[i] < best:
-			best = s[j] - s[i] - (size[i] + size[j]) * 0.5
+		if j != i and s[j] > s[i] and s[j] - s[i] < nearest:
+			nearest = s[j] - s[i]
+			best = nearest - (size[i] + size[j]) * 0.5
 		j = _link[j]
 	if best < INF:
 		return best
@@ -478,12 +511,23 @@ func _on_way(at: Vector2, i: int, c: int) -> bool:
 # whether two cars' footprints (length by 2 m, a little shrunk) overlap
 static func _overlap(a: Vector2, da: Vector2, la: float, b: Vector2, db: Vector2,
 		lb: float) -> bool:
-	for axis: Vector2 in [da, da.orthogonal(), db, db.orthogonal()]:
-		var ra := absf(axis.dot(da)) * (la * 0.5 - 0.15) + absf(axis.dot(da.orthogonal())) * 0.85
-		var rb := absf(axis.dot(db)) * (lb * 0.5 - 0.15) + absf(axis.dot(db.orthogonal())) * 0.85
-		if absf(axis.dot(b - a)) > ra + rb:
-			return false
-	return true
+	var d := b - a
+	var na := da.orthogonal()
+	var nb := db.orthogonal()
+	var ha := la * 0.5 - SHRINK
+	var hb := lb * 0.5 - SHRINK
+	return _apart(da, d, da, na, ha, db, nb, hb) == false \
+		and _apart(na, d, da, na, ha, db, nb, hb) == false \
+		and _apart(db, d, da, na, ha, db, nb, hb) == false \
+		and _apart(nb, d, da, na, ha, db, nb, hb) == false
+
+
+# whether two footprints are apart along one axis (separating axis test)
+static func _apart(axis: Vector2, d: Vector2, da: Vector2, na: Vector2, ha: float, db: Vector2,
+		nb: Vector2, hb: float) -> bool:
+	var ra := absf(axis.dot(da)) * ha + absf(axis.dot(na)) * HALF_W
+	var rb := absf(axis.dot(db)) * hb + absf(axis.dot(nb)) * HALF_W
+	return absf(axis.dot(d)) > ra + rb
 
 
 func _reserve(node: int, c: int, car: int) -> void:
@@ -508,12 +552,22 @@ func _may_enter(i: int) -> bool:
 			if out >= 0:
 				nxt2[i] = net.connector(m, out)
 				_grow()
+	# a lane crosses in turn: never before the car in front of it
+	var j := _first[path[i]]
+	while j >= 0:
+		if j != i and s[j] > s[i] and granted[j] == 0:
+			return false
+		j = _link[j]
+	# held up by a car standing in its way: the others waiting here do not give way to it
+	# meanwhile (that car may be one of them)
+	held[i] = 1
 	if not _swept_clear(i, c):
 		return false
-	if nxt2[i] < 0:
-		return _clear(i, c, true)
-	return _first[m] < 0 and _swept_clear(i, nxt2[i]) and _clear(i, c, false) \
-		and _clear(i, nxt2[i], true)
+	if nxt2[i] >= 0 and (_first[m] >= 0 or not _swept_clear(i, nxt2[i])):
+		return false
+	held[i] = 0
+	return _clear(i, c) and (nxt2[i] < 0 or _clear(i, nxt2[i])) \
+		and _room(i, nxt2[i] if nxt2[i] >= 0 else c)
 
 
 # whether no car stands anywhere along connector c but those crossing its own junction (which
@@ -541,20 +595,23 @@ func _swept_clear(i: int, c: int) -> bool:
 	return true
 
 
-# whether connector c is free of every crossing car's way, and nobody has waited longer for a
-# crossing way at its junction; with `room`, whether the street it leads to has room for car i
-func _clear(i: int, c: int, room: bool) -> bool:
+# whether connector c is free of every crossing car's way, and nobody free to go has waited
+# longer for a crossing way at its junction
+func _clear(i: int, c: int) -> bool:
 	var node := net.to_node[c]
 	for r in _res_count:
 		if _res_node[r] == node and _res_car[r] != i and net.conflict(c, _res_conn[r]):
 			return false
 	for k in _wait_count:
 		var j := _waiting[k]
-		if j != i and granted[j] == 0 and net.to_node[path[j]] == node \
+		if j != i and granted[j] == 0 and held[j] == 0 and net.to_node[path[j]] == node \
 				and wait[j] > wait[i] + 0.5 and net.conflict(c, nxt[j]):
 			return false
-	if not room:
-		return true
+	return true
+
+
+# whether the street connector c leads to has room for the whole of car i
+func _room(i: int, c: int) -> bool:
 	var lane := net.dst[c]
 	var need := size[i] + GAP
 	var j := _first[lane]
@@ -606,6 +663,7 @@ func _place(i: int) -> void:
 # was planned with the junction before)
 func _plan(i: int, p: int) -> void:
 	wait[i] = 0.0
+	held[i] = 0
 	if nxt2[i] >= 0:
 		nxt[i] = nxt2[i]
 		nxt2[i] = -1
@@ -652,6 +710,7 @@ func _remove(i: int) -> void:
 		nxt[i] = nxt[last]
 		nxt2[i] = nxt2[last]
 		granted[i] = granted[last]
+		held[i] = held[last]
 		braking[i] = braking[last]
 		wait[i] = wait[last]
 		stuck[i] = stuck[last]
@@ -671,14 +730,15 @@ func _remove(i: int) -> void:
 
 # a new car somewhere near the view, out of sight unless `anywhere`; false when no spot was free
 func _spawn(anywhere: bool) -> bool:
-	if count >= CAP or _spawn_total <= 0.0:
+	if count >= CAP or _near_total <= 0.0:
 		return false
 	for attempt in 12:
-		var pick := _rng.randf() * _spawn_total
-		var lane := 0
-		while lane < net.lane_count - 1 and pick > _spawn_w[lane]:
-			pick -= _spawn_w[lane]
-			lane += 1
+		var pick := _rng.randf() * _near_total
+		var k := 0
+		while k < _near.size() - 1 and pick > _spawn_w[_near[k]]:
+			pick -= _spawn_w[_near[k]]
+			k += 1
+		var lane := _near[k]
 		var at := _rng.randf_range(4.0, net.length[lane] - LOOK)
 		var vk := _vehicle(lane)
 		var p := net.point(lane, at, net.seg_at(lane, at, 0))
@@ -778,7 +838,8 @@ func _draw() -> void:
 		_quad_uv[o + 2] = r.end
 		_quad_uv[o + 3] = r.position + Vector2(0, r.size.y)
 		var code := BlockView.depth_code(pos[i].x - pos[i].y)
-		var col := Color8(code & 255, code >> 8, 0)
+		# faded as a whole when its middle is beyond the radius, like a lot's buildings
+		var col := Color8(code & 255, code >> 8, 255 if pos[i].length() > _active else 0)
 		for c in 4:
 			_quad_col[o + c] = col
 	RenderingServer.canvas_item_add_triangle_array(get_canvas_item(), _quad_idx, _quad_pts,
@@ -798,9 +859,6 @@ uniform sampler2D atlas : filter_nearest;
 uniform sampler2D depth_tex : filter_nearest;
 uniform sampler2D shade_tex : filter_nearest;
 // where ground (0, 0) lands in the drawing, pixels per metre, the active radius (m)
-uniform vec2 origin;
-uniform float scale;
-uniform float active;
 uniform float tol;
 """ + Pal.shader_consts() + """
 varying vec2 lp;
@@ -822,13 +880,9 @@ void fragment() {
 	if (occ > 0.5 && occ > mine + tol) discard;
 	int idx = int(round(t.r * 255.0));
 	if (idx != INK) {
-		// the ground just under this pixel of the car: faded beyond the radius, darker in shade
-		vec2 c = vec2(p) + vec2(0.5, 1.5) - origin;
-		float a = c.x / scale;
-		float b = 2.0 * c.y / scale;
-		float u = (a + b) * 0.5;
-		float v = (b - a) * 0.5;
-		if (u * u + v * v > active * active) idx = pal_at(idx, 3);
+		// faded beyond the radius (COLOR.b, per car); darker where the ground just under this
+		// pixel lies in a cast shadow
+		if (COLOR.b > 0.5) idx = pal_at(idx, 3);
 		if (texelFetch(shade_tex, clamp(p + ivec2(0, 1), ivec2(0), size - 1), 0).r > 0.5)
 			idx = pal_at(idx, 1);
 	}
@@ -840,8 +894,6 @@ void fragment() {
 	m.set_shader_parameter("lut", Pal.lut())
 	m.set_shader_parameter("depth_tex", view.depth_tex)
 	m.set_shader_parameter("shade_tex", view.shade_tex)
-	m.set_shader_parameter("origin", _origin)
-	m.set_shader_parameter("scale", Iso.S)
-	m.set_shader_parameter("active", active_radius + 2.0 if active_radius > 0.0 else 1.0e9)
+	_active = active_radius + 2.0 if active_radius > 0.0 else 1.0e9
 	m.set_shader_parameter("tol", HIDE_TOL * BlockView.DEPTH_K)
 	return m
