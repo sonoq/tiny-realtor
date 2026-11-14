@@ -26,8 +26,9 @@ static func read_json(path: String) -> Variant:
 	return json.data
 
 
-# writes through a temp file, so a crash mid-write never leaves half a save behind
-static func write_json(path: String, data: Variant) -> int:
+# writes through a temp file, so a crash mid-write never leaves half a save behind; with
+# `backup` the file being replaced is kept as <path>.bak first (the game's save)
+static func write_json(path: String, data: Variant, backup: bool = false) -> int:
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var tmp := path + ".tmp"
 	var f := FileAccess.open(tmp, FileAccess.WRITE)
@@ -37,6 +38,8 @@ static func write_json(path: String, data: Variant) -> int:
 	f.store_string(JSON.stringify(data))
 	var size := f.get_length()
 	f.close()
+	if backup and FileAccess.file_exists(path):
+		DirAccess.copy_absolute(path, path + ".bak")
 	DirAccess.rename_absolute(tmp, path)
 	return size
 

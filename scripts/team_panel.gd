@@ -113,8 +113,10 @@ func draw(c: CanvasItem) -> void:
 		var cost := game.hire_cost(id, cand)
 		var can := game.can_hire(id, cand) == ""
 		var sure := _sure == int(cand["slot"]) and _clock < _sure_until
-		Ui.button(c, _hire_btn(k), "¿Seguro?" if sure else Economy.money(cost), hot, can, not can,
-			Ui.NARROW)
+		var label := Economy.money(cost)
+		if sure:
+			label = "¿Cambiar?" if game.manager(id) != null else "¿Seguro?"
+		Ui.button(c, _hire_btn(k), label, hot, can, not can, Ui.NARROW)
 	if cands.is_empty():
 		Ui.text(c, Vector2(16, ROW_Y + 40), "Ya contrataste a todos; vuelve luego", Ui.SMALL,
 			Ui.MUTED, Ui.TEN)
@@ -129,17 +131,21 @@ func _person(c: CanvasItem, m: Dictionary, r: Rect2, px: float, big: bool) -> vo
 	Faces.badge(c, badge, int(m["face"]), int(m["rarity"]))
 	var x := badge.end.x + 14.0
 	var rarity := int(m["rarity"])
-	var y := r.position.y + (40.0 if big else 30.0)
-	Ui.text(c, Vector2(x, y), m["name"], Ui.TEXT, Ui.CREAM, Ui.BOLD if big else Ui.NARROW)
-	Ui.text(c, Vector2(x, y + 24), Economy.RARITY_NAMES[rarity], Ui.SMALL,
+	var y := r.position.y + (36.0 if big else 28.0)
+	var name: String = m["name"]
+	Ui.text(c, Vector2(x, y), name, Ui.TEXT, Ui.CREAM, Ui.BOLD if big else Ui.NARROW)
+	var nw := Ui.text_width(name, Ui.TEXT, Ui.BOLD if big else Ui.NARROW)
+	Ui.text(c, Vector2(x + nw + 10, y), Economy.RARITY_NAMES[rarity], Ui.SMALL,
 		Faces.RARITY_INK[rarity], Ui.TEN)
-	var line := ""
-	for t: Dictionary in m["traits"]:
-		line += (" · " if line != "" else "") + Economy.trait_text(t)
+	# one bonus a line, so none is cut short: they are the choice
 	var room := r.end.x - x - 12.0
-	var s := line
-	var cut := line.length()
-	while cut > 3 and Ui.text_width(s, Ui.SMALL, Ui.TEN) > room:
-		cut -= 1
-		s = line.left(cut).strip_edges() + "…"
-	Ui.text(c, Vector2(x, y + 50), s, Ui.SMALL, Ui.MINT, Ui.TEN)
+	var line_y := y + 24.0
+	for t: Dictionary in m["traits"]:
+		var s := Economy.trait_text(t)
+		var full := s
+		var cut := s.length()
+		while cut > 3 and Ui.text_width(s, Ui.SMALL, Ui.TEN) > room:
+			cut -= 1
+			s = full.left(cut).strip_edges() + "…"
+		Ui.text(c, Vector2(x, line_y), s, Ui.SMALL, Ui.MINT, Ui.TEN)
+		line_y += 20.0

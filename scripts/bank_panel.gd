@@ -117,8 +117,8 @@ func draw(c: CanvasItem) -> void:
 	_draw_status(c)
 	for k in Economy.LOANS.size():
 		_draw_loan(c, k)
-	Ui.micro(c, Vector2(12, 548), "EL INTERES NUNCA PASA DEL 8% DE TU ALQUILER. NUNCA TE QUITAN NADA.",
-		Ui.MUTED, 2.0, true)
+	Ui.text(c, Vector2(16, 556), "El interés nunca pasa del 8% de tu alquiler", Ui.SMALL, Ui.MINT,
+		Ui.TEN)
 	Ui.footer(c, "")
 	if _ask != "":
 		_draw_sheet(c)
@@ -140,7 +140,7 @@ func _draw_status(c: CanvasItem) -> void:
 	var share := interest / inc * 100.0 if inc > 0.0 else 0.0
 	Ui.text(c, Vector2(x, y + 28), "Interés %s/min (%d%% de tu alquiler)" % [Economy.money(
 		interest), roundi(share)], Ui.SMALL, Ui.MUTED, Ui.TEN)
-	Ui.text(c, Vector2(x, y + 70), "Pago auto", Ui.TEXT, Ui.CREAM, Ui.NARROW)
+	Ui.text(c, Vector2(x, y + 70), "Pago automático", Ui.TEXT, Ui.CREAM, Ui.NARROW)
 	for k in Economy.AUTOPAY.size():
 		var p: float = Economy.AUTOPAY[k]
 		var label := "NO" if p == 0.0 else "%d%%" % roundi(p * 100.0)
@@ -178,7 +178,9 @@ func _draw_loan(c: CanvasItem, k: int) -> void:
 	Ui.text(c, Vector2(x, r.position.y + 54), terms, Ui.SMALL, Ui.MUTED, Ui.TEN)
 	Ui.text(c, Vector2(x, r.position.y + 78), what, Ui.SMALL, tone, Ui.TEN)
 	if owed > 0.0:
-		Ui.button(c, b, "Devolver", hot, false, game.money() <= 0.0)
+		var can := minf(owed, game.money())
+		Ui.button(c, b, "Devolver " + Economy.money(can) if can > 0.0 else "Devolver", hot, false,
+			can <= 0.0, Ui.NARROW)
 	else:
 		Ui.button(c, b, "Pedir", hot, false, room < Economy.LOAN_MIN)
 

@@ -22,8 +22,8 @@ const LEVEL_BAR := Rect2(12, 558, 576, 16)
 const LEVEL_ZONE := Rect2(0, 534, 600, 44)
 const CARD := Rect2(12, 286, 576, 244)
 const CARD_X := Rect2(528, 294, 52, 52)
-const MAIN_BTN := Rect2(30, 432, 340, 52)
-const SIDE_BTN := Rect2(380, 432, 190, 52)
+const MAIN_BTN := Rect2(30, 432, 316, 52)
+const SIDE_BTN := Rect2(370, 432, 200, 52)
 const TOAST := Rect2(12, 112, 516, 48)
 const UNDO_BTN := Rect2(376, 114, 148, 44)
 const AWAY := Rect2(60, 150, 480, 300)
@@ -35,6 +35,16 @@ const POP_LIFE := 1.6
 const POP_RISE := 18.0
 const MAX_TAGS := 10
 const MAX_POPS := 8
+# a click on a spending button this soon after the window got the focus is ignored (it was the
+# click that brought the window up), and so is a second tap this soon after the first
+const FOCUS_GRACE_MS := 400
+const DOUBLE_TAP_MS := 350
+# the welcome-back card ignores taps for this long, so the focusing click does not close it
+const AWAY_GRACE_S := 0.7
+# the next move keeps its target this long, so the hint does not jump around
+const BEST_HOLD_S := 5.0
+# the card's buttons keep what they do while the pointer is on them, at most this long
+const FREEZE_S := 3.0
 
 var view: OfficeView
 var game: Game
@@ -58,6 +68,13 @@ var _pop_t := 0.0
 var _best := {}
 var _best_t := -1.0
 var _shown_level := 1
+# the card's buttons as last shown while the pointer is on them: {"lot", "buttons", "t"}
+var _frozen := {}
+var _last_tap_ms := -100000
+var _last_tap_at := Vector2(-100, -100)
+var _away_since := -1.0
+var _cash := ""
+var _cash_t := 0.0
 
 
 func setup(the_view: OfficeView, the_game: Game, office_id: String, area: Dictionary) -> void:
@@ -77,6 +94,8 @@ func _process(delta: float) -> void:
 	for n in game.news:
 		say(n, true)
 	game.news.clear()
+	if not game.away.is_empty() and _away_since < 0.0:
+		_away_since = _clock
 	if _clock >= _toast_until and not _toasts.is_empty():
 		_toast = _toasts.pop_front()
 		_toast_until = _clock + TOAST_S
@@ -117,6 +136,12 @@ func press(at: Vector2) -> bool:
 		or _undo_visible() and UNDO_BTN.has_point(at)
 
 
+# the cards, the toast and the bottom bars: a drag that starts on them does not pan the map
+func over_ui(at: Vector2) -> bool:
+	return view.is_card_open() and CARD.has_point(at) or at.y >= NEXT.position.y \
+		or (_clock < _toast_until or _undo_visible()) and TOAST.has_point(at)
+
+
 # the bank and manager buttons hide under an open card
 func _buttons_shown() -> bool:
 	return not view.is_card_open()
@@ -130,11 +155,21 @@ func hover(at: Vector2) -> void:
 
 
 func click(at: Vector2) -> bool:
+	var now_ms := Time.get_ticks_msec()
+	# the second tap of a quick double tap on the same spot
+	var double := now_ms - _last_tap_ms < DOUBLE_TAP_MS and at.distance_to(_last_tap_at) < 12.0
+	_last_tap_ms = now_ms
+	_last_tap_at = at
 	if not game.away.is_empty():
-		game.away = {}
+		if _away_since >= 0.0 and _clock - _away_since >= AWAY_GRACE_S:
+			game.away = {}
+			_away_since = -1.0
 		queue_redraw()
 		return true
+	if _panel != null and double and _panel is TeamPanel:
+		return true
 	if _panel != null:
+		view.sync()
 		_panel.call("click", at)
 		if _panel.call("wants_close"):
 			_panel = null
@@ -157,13 +192,19 @@ func click(at: Vector2) -> bool:
 		open_panel("team")
 		return true
 	if view.is_card_open() and CARD.has_point(at):
+		var fresh := now_ms - App.focus_ms < FOCUS_GRACE_MS
+		# the rent and works are brought up to date before anything is bought
+		view.sync()
 		if CARD_X.has_point(at):
 			view.select(-1)
-		elif MAIN_BTN.has_point(at):
+		elif MAIN_BTN.has_point(at) and not fresh and not double:
 			_card_action(false)
-		elif SIDE_BTN.has_point(at):
+		elif SIDE_BTN.has_point(at) and not fresh and not double:
 			_card_action(true)
 		queue_redraw()
+		return true
+	# the toast's body is not the map
+	if (_clock < _toast_until or _undo_visible()) and TOAST.has_point(at):
 		return true
 	if not view.is_card_open() and NEXT.has_point(at):
 		_follow_best()
@@ -187,6 +228,8 @@ func back() -> bool:
 
 
 func open_panel(kind: String) -> void:
+	# an undo would also take back what is done in a panel: it ends here
+	_undo = {}
 	if kind == "bank":
 		_panel = BankPanel.new(game)
 	else:
@@ -238,23 +281,26 @@ func _card_buttons(i: int) -> Array:
 			main = ["NIVEL MÁXIMO", false, Callable(), ""]
 		var side := none
 		if game.auto_open(id):
-			side = ["AUTO: " + ("SÍ" if game.auto_on(id) else "NO"), true,
+			side = ["OBRAS SOLAS: " + ("SÍ" if game.auto_on(id) else "NO"), true,
 				func() -> void:
+					_undo = {}
 					game.set_auto(id, not game.auto_on(id))
 					game.save()
 					if game.auto_on(id):
 						say("Tu oficina construirá sola")
 					_after_change(-1), ""]
 		else:
-			side = ["AUTO EN NV %d" % Economy.AUTO_LEVEL, false, Callable(), ""]
+			side = ["OBRAS SOLAS NV %d" % Economy.AUTO_LEVEL, false, Callable(), ""]
 		return [main, side]
 	if not game.owns(id, lid):
 		var price := game.buy_price(id, info)
 		var why := game.can_buy(id, info)
 		var main := ["COMPRAR " + Economy.money(price), why == "", _buy.bind(i), _short(why, price)]
 		if why == "Fuera de tu radio":
-			main = ["FUERA DE TU RADIO", false, Callable(), "Sube la oficina para llegar"]
-		return [main, _loan_button(price, _buy.bind(i)) if why.begins_with("Te faltan") else none]
+			main = ["VER TU OFICINA", true, _select_office,
+				"Fuera de tu radio: sube la oficina para llegar"]
+		return [main, _loan_button(i, price, _buy.bind(i, false)) if why.begins_with("Te faltan")
+			else none]
 	var l := game.lot(id, lid)
 	if l.has("end"):
 		return [["EN OBRAS · " + Economy.duration(float(l["end"]) - _now()), false, Callable(),
@@ -265,57 +311,83 @@ func _card_buttons(i: int) -> Array:
 	var to := int(l["t"]) + 1
 	var c := game.build_cost(id, l, to)
 	var why := game.can_build(id, lid, to)
-	var main := ["%s · %s" % [_tier_caps(to), Economy.money(c)], why == "", _build.bind(i, to),
+	var main := ["Construir %s · %s" % [_tier_caps(to, true), Economy.money(c)], why == "",
+		_build.bind(i, to),
 		_short(why, c) if why != "" else "Tarda " + Economy.duration(game.build_time(id,
 		int(l["t"]), to))]
 	var top := game.best_target(id, lid)
 	var side := none
 	if why == "" and top > to:
-		side = ["HASTA " + _tier_caps(top, true), true, _build.bind(i, top), ""]
+		side = ["HASTA %s %s" % [_tier_caps(top, true), Economy.money(game.build_cost(id, l,
+			top))], true, _build.bind(i, top), "Directo a %s: tarda %s" % [Economy.TIER_NAMES[top],
+			Economy.duration(game.build_time(id, int(l["t"]), top))]]
 	elif why.begins_with("Te faltan"):
-		side = _loan_button(c, _build.bind(i, to))
+		side = _loan_button(i, c, _build.bind(i, to, false))
 	return [main, side]
 
 
 # the card's side button when money is short: borrow just what is missing (the cheapest loan
 # that has room), then do it
-func _loan_button(cost: float, then: Callable) -> Array:
+func _loan_button(i: int, cost: float, then: Callable) -> Array:
 	var need := ceilf((cost - game.money()) / 1000.0) * 1000.0
 	for def in Economy.LOANS:
 		if game.loan_room(def["id"]) >= need and game.can_borrow(def["id"], need) == "":
 			var kind: String = def["id"]
-			return ["PRESTAR " + Economy.money(need), true, func() -> void:
+			var owe := need * (1.0 + float(def["fee"]))
+			var note := "Préstamo %s: debes %s, se paga solo" % [def["name"], Economy.money(owe)]
+			return ["PEDIR " + Economy.money(need), true, func() -> void:
+				# one undo takes back both the loan and what it paid for
+				_remember(i)
 				if game.borrow(kind, need) == "":
-					say("Préstamo %s: %s" % [def["name"], Economy.money(need)])
-					then.call(), ""]
+					then.call()
+				else:
+					_undo = {}, note]
 	return ["", false, Callable(), ""]
 
 
 func _card_action(side: bool) -> void:
 	if view.picked() < 0:
 		return
-	var b: Array = _card_buttons(view.picked())[1 if side else 0]
+	var b: Array = _buttons(view.picked())[1 if side else 0]
 	if b[1] and (b[2] as Callable).is_valid():
+		_frozen = {}
 		(b[2] as Callable).call()
+
+
+# the card's buttons; while the pointer is on one they keep their label and action (money comes
+# in ten times a second and would otherwise change a button under the cursor)
+func _buttons(i: int) -> Array:
+	var on := MAIN_BTN.has_point(hot) or SIDE_BTN.has_point(hot)
+	if on and _frozen.get("lot", -1) == i and _clock - float(_frozen["t"]) < FREEZE_S:
+		return _frozen["buttons"]
+	var b := _card_buttons(i)
+	_frozen = {"lot": i, "buttons": b, "t": _clock} if on else {}
+	return b
 
 
 func _remember(i: int) -> void:
 	_undo = {"state": game.state.duplicate(true), "lot": i, "until": _clock + UNDO_S}
+	# the toast (and its undo button) stays up as long as the undo does
+	_toast_until = maxf(_toast_until, _clock + UNDO_S)
 
 
-func _buy(i: int) -> void:
-	_remember(i)
+func _buy(i: int, remember: bool = true) -> void:
+	if remember:
+		_remember(i)
 	if game.buy(id, infos[i]) == "":
 		say("¡Comprado!")
+		_toast_until = maxf(_toast_until, float(_undo.get("until", 0.0)))
 		_after_change(i)
 	else:
 		_undo = {}
 
 
-func _build(i: int, to: int) -> void:
-	_remember(i)
+func _build(i: int, to: int, remember: bool = true) -> void:
+	if remember:
+		_remember(i)
 	if game.build(id, _lot_id(i), to) == "":
 		say("Obras: %s" % Economy.TIER_NAMES[to])
+		_toast_until = maxf(_toast_until, float(_undo.get("until", 0.0)))
 		_after_change(i)
 	else:
 		_undo = {}
@@ -335,12 +407,22 @@ func _undo_visible() -> bool:
 	return not _undo.is_empty() and _clock < float(_undo["until"])
 
 
+# puts the whole game back as it was before the action (a loan taken for it, works the builder
+# started since), and redraws every lot of this office that changed
 func _do_undo() -> void:
-	var i: int = _undo["lot"]
+	var before: Dictionary = game.office(id).get("lots", {}).duplicate(true)
 	game.state = _undo["state"]
 	_undo = {}
+	_toast_until = 0.0
 	say("Deshecho")
-	_after_change(i)
+	var after: Dictionary = game.office(id).get("lots", {})
+	for lid: String in before:
+		if index.has(lid) and (not after.has(lid) or after[lid] != before[lid]):
+			refresh_lot(index[lid])
+	for lid: String in after:
+		if not before.has(lid) and index.has(lid):
+			refresh_lot(index[lid])
+	_after_change(-1)
 
 
 # saves, redraws the lot (if any) and refreshes the hints
@@ -406,10 +488,25 @@ func _follow_best() -> void:
 
 
 func _best_move() -> Dictionary:
-	if _best_t < 0.0 or _clock - _best_t > 1.0:
+	if _best_t < 0.0 or _clock - _best_t > BEST_HOLD_S or not _best_valid():
 		_best = game.best_move(id, infos)
 		_best_t = _clock
 	return _best
+
+
+# the held next move still makes sense (not bought or built meanwhile)
+func _best_valid() -> bool:
+	match _best.get("kind", ""):
+		"buy":
+			return not game.owns(id, _best["info"]["id"])
+		"build":
+			var l := game.lot(id, _best["lot"])
+			return not l.is_empty() and not l.has("end")
+		"level":
+			return game.level(id) < Economy.max_level()
+		"hire":
+			return game.manager(id) == null
+	return false
 
 
 # --- text ----------------------------------------------------------------------------------------
@@ -419,6 +516,16 @@ static func _tier_caps(t: int, short: bool = false) -> String:
 	if short and t == 3:
 		n = "Bloque"
 	return n
+
+
+# a button label narrowed to the button: the verb goes first when it does not fit
+static func _fit_label(s: String, width: float) -> String:
+	if Ui.text_width(s, Ui.TEXT, Ui.NARROW) <= width - 20.0:
+		return s
+	for verb: String in ["Construir ", "Comprar "]:
+		if s.begins_with(verb):
+			return _fit_label(s.substr(verb.length()), width)
+	return s
 
 
 # a reason for the card, with how long the rent takes to cover what is missing
@@ -480,7 +587,11 @@ func _draw() -> void:
 
 
 func _draw_money() -> void:
-	var cash := Economy.money(game.money())
+	# the counter moves four times a second, so its last digits do not flicker
+	if _clock - _cash_t >= 0.25 or _cash == "":
+		_cash = Economy.money(game.money())
+		_cash_t = _clock
+	var cash := _cash
 	var w := Ui.text_width(cash, Ui.TEXT)
 	Ui.coin(self, MONEY_AT + Vector2(-w - 22, -14))
 	Ui.text_right(self, MONEY_AT, cash, Ui.TEXT, Ui.GOLD)
@@ -504,7 +615,8 @@ func _draw_icon_button(r: Rect2, kind: String) -> void:
 			for i in rows[j].length():
 				if rows[j][i] == "1":
 					draw_rect(Rect2(at + Vector2(i, j) * px, Vector2(px, px)), Ui.GOLD)
-		if game.total_debt() > 0.0:
+		# a red dot only when the debt is not paying itself off
+		if game.total_debt() > 0.0 and game.autopay() <= 0.0:
 			draw_rect(Rect2(r.end - Vector2(14, 14), Vector2(8, 8)), Ui.BLOOD)
 	else:
 		var m: Variant = game.manager(id)
@@ -647,7 +759,7 @@ func _draw_level() -> void:
 	# free cranes: the main signal that something can be started
 	var free := game.cranes(id) - game.cranes_busy(id)
 	Ui.text(self, Vector2(LEVEL_BAR.position.x + Ui.text_width(left, Ui.TEXT) + 12,
-		LEVEL_BAR.position.y - 10), "grúas %d/%d" % [free, game.cranes(id)], Ui.TEXT,
+		LEVEL_BAR.position.y - 10), "grúas libres %d/%d" % [free, game.cranes(id)], Ui.TEXT,
 		Ui.CYAN if free > 0 else Ui.MUTED, Ui.NARROW)
 	var right := "Radio %d m · máximo" % roundi(game.radius(id))
 	var frac := 1.0
@@ -660,6 +772,13 @@ func _draw_level() -> void:
 			right = "Nv %d: %s" % [lv + 1, _short(game.can_level_up(id), c).replace("Te faltan ",
 				"faltan ")]
 	var ready := frac >= 1.0 and lv < Economy.max_level()
+	# the right label gives up its estimate, then its words, before it runs into the left one
+	var room := LEVEL_BAR.size.x - Ui.text_width(left, Ui.TEXT) - Ui.text_width(
+		"grúas libres %d/%d" % [free, game.cranes(id)], Ui.TEXT, Ui.NARROW) - 36.0
+	if Ui.text_width(right, Ui.TEXT, Ui.NARROW) > room and right.contains(" · "):
+		right = right.left(right.find(" · "))
+	if Ui.text_width(right, Ui.TEXT, Ui.NARROW) > room:
+		right = right.replace("faltan ", "")
 	Ui.text_right(self, Vector2(LEVEL_BAR.end.x, LEVEL_BAR.position.y - 10), right, Ui.TEXT,
 		Ui.GOLD if ready else Ui.MUTED, Ui.NARROW)
 	Ui.bar(self, LEVEL_BAR, minf(frac, 1.0), Ui.GOLD if not ready else Ui.CYAN)
@@ -695,9 +814,13 @@ func _draw_away() -> void:
 		Ui.text(self, Vector2(x, y), "%d obras terminadas" % int(a["built"]), Ui.SMALL, Ui.MINT,
 			Ui.TEN)
 		y += 26
+	if int(a.get("auto", 0)) > 0:
+		Ui.text(self, Vector2(x, y), "Obras solas empezó %d" % int(a["auto"]), Ui.SMALL, Ui.MINT,
+			Ui.TEN)
+		y += 26
 	if float(a.get("repaid", 0.0)) > 0.0:
-		Ui.text(self, Vector2(x, y), "Al banco: %s" % Economy.money(float(a["repaid"])), Ui.SMALL,
-			Ui.MUTED, Ui.TEN)
+		Ui.text(self, Vector2(x, y), "Deuda pagada: %s" % Economy.money(float(a["repaid"])),
+			Ui.SMALL, Ui.MUTED, Ui.TEN)
 	Ui.button(self, AWAY_OK, "¡Bien!", hot, true)
 
 
@@ -760,14 +883,18 @@ func _draw_card(i: int) -> void:
 		if l.has("end"):
 			Ui.bar(self, Rect2(MAIN_BTN.position + Vector2(0, -10), Vector2(MAIN_BTN.size.x +
 				SIDE_BTN.size.x + 10, 8)), game.progress(id, lid))
-	var buttons := _card_buttons(i)
+	var buttons := _buttons(i)
 	var main: Array = buttons[0]
 	var side: Array = buttons[1]
 	if main[0] != "":
-		Ui.button(self, MAIN_BTN, main[0], hot, main[1], not main[1], Ui.NARROW)
+		Ui.button(self, MAIN_BTN, _fit_label(main[0], MAIN_BTN.size.x), hot, main[1], not main[1],
+			Ui.NARROW)
 	if side[0] != "":
-		Ui.button(self, SIDE_BTN, side[0], hot, false, not side[1], Ui.NARROW)
+		Ui.button(self, SIDE_BTN, _fit_label(side[0], SIDE_BTN.size.x), hot, false, not side[1],
+			Ui.NARROW)
 	var note: String = main[3]
+	if SIDE_BTN.has_point(hot) and side[3] != "":
+		note = side[3]
 	if note != "":
 		_fit(Vector2(x + 12, CARD.end.y - 14), note, CARD.size.x - 60, Ui.MUTED, Ui.SMALL)
 	Ui.button(self, CARD_X, "X", hot)

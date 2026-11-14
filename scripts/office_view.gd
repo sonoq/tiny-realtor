@@ -50,8 +50,12 @@ var _lot_count := 0
 var _office_lot := ""
 var _block: Dictionary = {}
 var _play: OfficePlay
-# the drawing being made after a level-up, shown once it is ready
+# the drawing being made after a level-up, shown once it is ready, and the lots that changed
+# while it was being made (redrawn on it once it is in)
 var _next_view: BlockView
+var _late: Array[int] = []
+# the press started on the game's buttons or cards: dragging from there does not pan
+var _press_ui := false
 # the lot under the pointer and the selected one, -1 for none
 var _hover := -1
 var _picked := -1
@@ -162,6 +166,7 @@ func _pan_to(at: Vector2) -> void:
 
 
 func press(at: Vector2) -> bool:
+	_press_ui = _play.press(at) or _play.over_ui(at)
 	return _play.press(at) or Ui.BACK_RECT.has_point(at)
 
 
@@ -232,6 +237,8 @@ func drawing_to_screen(p: Vector2) -> Vector2:
 
 
 func redraw_lot(i: int) -> void:
+	if _next_view != null and not i in _late:
+		_late.append(i)
 	_view.redraw_lot(i)
 
 
@@ -255,6 +262,9 @@ func relevel(radius: float) -> void:
 		_sprite.texture = nv.texture
 		_outline_cache_clear()
 		old.queue_free()
+		for i in _late:
+			_view.redraw_lot(i)
+		_late.clear()
 		print("OfficeView: %s redrawn for radius %d m, build %d ms, gpu %d ms" % [
 			office.get("id", ""), roundi(radius), nv.build_ms, nv.draw_ms])
 		_over.queue_redraw())
@@ -279,6 +289,13 @@ func play() -> OfficePlay:
 	return _play
 
 
+# brings the game up to date before an action (after a sleep the first click can come before
+# the next tick)
+func sync() -> void:
+	if app != null:
+		app.tick_game()
+
+
 # the canvas point over a lot's ground middle, for tools that point at lots like a player
 func screen_of_lot(lot: int) -> Vector2:
 	var poly: PackedVector2Array = _view.lots[lot]["poly"]
@@ -297,7 +314,8 @@ func lots_by_distance() -> Array[int]:
 
 
 func drag(_at: Vector2, rel: Vector2) -> void:
-	pan_by(rel)
+	if not _play.blocks_map() and not _press_ui:
+		pan_by(rel)
 
 
 func hover(at: Vector2) -> void:
@@ -308,7 +326,8 @@ func hover(at: Vector2) -> void:
 
 
 func wheel(_at: Vector2, steps: int) -> void:
-	_set_zoom(_zoom_i + steps)
+	if not _play.blocks_map():
+		_set_zoom(_zoom_i + steps)
 
 
 func back() -> bool:

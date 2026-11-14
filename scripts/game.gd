@@ -17,6 +17,8 @@ const VERSION := 1
 const AWAY_GAP := 120.0
 # money and debt move in steps no longer than this while a loan runs (interest, autopay)
 const BANK_STEP := 60.0
+# with an office's builder on, time away is looked at this often for cranes to fill
+const AUTO_STEP := 300.0
 
 var path := ""
 var state: Dictionary = {}
@@ -47,6 +49,8 @@ func now() -> float:
 	var t := w
 	if _last_now >= 0.0 and w < _last_now - 1.0:
 		t = _last_now + maxf(0.0, m - _last_mono)
+	elif _last_now >= 0.0:
+		t = maxf(w, _last_now)
 	_last_now = t
 	_last_mono = m
 	return t
@@ -65,42 +69,98 @@ func fresh(t: float) -> void:
 			"bought": 0}}
 
 
-# reads the save (a missing or broken one starts a new game); then pays the time away
+# reads the save, or the temp file of an interrupted write, or the last good backup; when a
+# save exists but none of them can be read, it is kept aside (save.corrupt-<time>.json) before a
+# new game starts, so nothing is ever overwritten blind. Then it pays the time away
 func load_or_new() -> Array[Dictionary]:
 	var t := now()
-	var data: Variant = Store.read_json(path) if path != "" else null
-	if data is Dictionary and data.get("format") == FORMAT and int(data.get("version", 0)) >= 1:
-		state = data
-		_sanitize(t)
-		return advance(t)
-	if data != null:
-		push_warning("Game: unreadable save %s, starting a new game" % path)
+	if path != "":
+		for p in [path, path + ".tmp", path + ".bak"]:
+			var data: Variant = Store.read_json(p)
+			if data is Dictionary and data.get("format") == FORMAT \
+					and _num_ok(data.get("version")) and int(data["version"]) >= 1:
+				state = data
+				_sanitize(t)
+				if p != path:
+					push_warning("Game: save restored from " + p)
+				return advance(t)
+		if FileAccess.file_exists(path):
+			var keep := "%s.corrupt-%d.json" % [path.get_basename(), int(t)]
+			DirAccess.copy_absolute(path, keep)
+			push_warning("Game: unreadable save kept as %s, starting a new game" % keep)
 	fresh(t)
 	return []
 
 
 func save() -> void:
-	if path != "":
-		Store.write_json(path, state)
+	if path == "":
+		return
+	# never write a number JSON cannot read back
+	if not _num_ok(state.get("money")):
+		state["money"] = 0.0
+	Store.write_json(path, state, true)
 
 
 # a save from a newer clock (seen far in the future) or with odd numbers is made sane
 func _sanitize(t: float) -> void:
-	state["money"] = maxf(0.0, float(state.get("money", 0.0)))
-	if not is_finite(float(state["money"])):
-		state["money"] = 0.0
+	state["money"] = maxf(0.0, float(state["money"])) if _num_ok(state.get("money")) else 0.0
 	# a save from the future (the clock was moved back) keeps its time: nothing is paid until
 	# the clock passes it again, so moving the clock back and forth never pays twice
-	var seen := float(state.get("seen", t))
-	if not is_finite(seen):
-		seen = t
+	var seen := float(state["seen"]) if _num_ok(state.get("seen")) else t
 	state["seen"] = seen
 	_last_now = maxf(t, seen)
 	for key: String in ["loans", "offices", "stats"]:
 		if not state.get(key) is Dictionary:
 			state[key] = {}
-	if not float(state.get("autopay", 0.1)) in Economy.AUTOPAY:
-		state["autopay"] = 0.10
+	state["autopay"] = _snap_autopay(float(state["autopay"]) if _num_ok(state.get("autopay"))
+		else 0.10)
+	# anything malformed is dropped rather than allowed to crash the game later
+	for kind: String in state["loans"].keys():
+		var ln: Variant = state["loans"][kind]
+		if not ln is Dictionary or Economy.loan_def(kind).is_empty() \
+				or not _num_ok(ln.get("debt")) or not _num_ok(ln.get("lent")) \
+				or float(ln["debt"]) <= 0.0:
+			state["loans"].erase(kind)
+	for id: String in state["offices"].keys():
+		var o: Variant = state["offices"][id]
+		if not o is Dictionary:
+			state["offices"].erase(id)
+			continue
+		o["level"] = clampi(int(o.get("level", 1)) if _num_ok(o.get("level")) else 1, 1,
+			Economy.max_level())
+		o["works"] = maxi(0, int(o.get("works", 0)) if _num_ok(o.get("works")) else 0)
+		if not o.get("lots") is Dictionary:
+			o["lots"] = {}
+		if not (o.get("manager") is Dictionary and o["manager"].get("traits") is Array):
+			o["manager"] = null
+		if not o.get("pool") is Dictionary or not _num_ok(o["pool"].get("at")):
+			o["pool"] = {"n": 0, "at": t}
+		for lid: String in o["lots"].keys():
+			var l: Variant = o["lots"][lid]
+			var ok: bool = l is Dictionary and _num_ok(l.get("t")) and (l.get("office", false)
+				or _num_ok(l.get("k")) and _num_ok(l.get("mx")) and _num_ok(l.get("pk", 1.0)))
+			# works with a missing or odd time are simply forgotten (the lot keeps its tier)
+			if ok and (l.has("end") or l.has("to")) and not (_num_ok(l.get("end"))
+					and _num_ok(l.get("to")) and _num_ok(l.get("start"))):
+				l.erase("to")
+				l.erase("end")
+				l.erase("start")
+			if not ok:
+				o["lots"].erase(lid)
+				continue
+			l["t"] = clampi(int(l["t"]), 0, 5)
+			if not l.get("office", false):
+				l["mx"] = clampi(int(l["mx"]), int(l["t"]), 5)
+			if l.has("to") and int(l["to"]) <= int(l["t"]):
+				l.erase("to")
+				l.erase("end")
+				l.erase("start")
+			elif l.has("to"):
+				l["to"] = mini(int(l["to"]), 5)
+
+
+static func _num_ok(v: Variant) -> bool:
+	return (v is float or v is int) and is_finite(float(v))
 
 
 # --- offices -------------------------------------------------------------------------------------
@@ -182,11 +242,23 @@ func can_open_office() -> String:
 	return ""
 
 
-func pay_office() -> void:
-	state["money"] = money() - next_office_cost() if not offices().is_empty() else money()
+# takes the next office's price now (0 for the first); returns what was paid
+func pay_office() -> float:
+	if can_open_office() != "":
+		return 0.0
+	var cost := next_office_cost()
+	if not is_finite(cost) or cost <= 0.0:
+		return 0.0
+	state["money"] = money() - cost
+	return cost
 
 
 # --- income --------------------------------------------------------------------------------------
+
+# a manager's cut of one kind (cost, time, land, interest), never a whole 100 %
+func cut(id: String, kind: String) -> float:
+	return clampf(Economy.trait_of(manager(id), kind), 0.0, 0.9)
+
 
 func lot_rent(id: String, l: Dictionary) -> float:
 	var base := Economy.office_rent(level(id)) if l.get("office", false) \
@@ -208,7 +280,7 @@ func income(id: String = "") -> float:
 
 
 func offline_cap_s() -> float:
-	var h := Economy.OFFLINE_HOURS[0]
+	var h: float = Economy.OFFLINE_HOURS[0]
 	for id: String in offices():
 		h = maxf(h, Economy.offline_hours(level(id)) + Economy.trait_of(manager(id), "offline"))
 	return h * 3600.0
@@ -226,48 +298,59 @@ func advance(t: float) -> Array[Dictionary]:
 	var gap := t - seen
 	var is_away := gap > AWAY_GAP
 	var paid_until := seen + (minf(gap, offline_cap_s()) if is_away else gap)
-	var m0 := money()
 	var i0 := float(state["stats"].get("interest", 0.0))
 	var r0 := float(state["stats"].get("repaid", 0.0))
-	var due: Array = []
+	var a0 := auto_started.size()
+	var e0 := float(state["stats"].get("earned", 0.0))
+	var builder := false
 	for id: String in offices():
-		var lots: Dictionary = office(id)["lots"]
-		for lid: String in lots:
-			var l: Dictionary = lots[lid]
-			if l.has("end") and float(l["end"]) <= t:
-				due.append([float(l["end"]), id, lid])
+		builder = builder or auto_on(id)
 	var cur := seen
-	while not due.is_empty():
-		due.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
-		var d: Array = due.pop_front()
-		var at := maxf(float(d[0]), cur)
+	# events: works ending, and (with a builder on) a look every AUTO_STEP so idle cranes start
+	# as soon as the money is there, offline too
+	while true:
+		var nxt := t
+		for id: String in offices():
+			var lots: Dictionary = office(id)["lots"]
+			for lid: String in lots:
+				var l: Dictionary = lots[lid]
+				if l.has("end"):
+					nxt = minf(nxt, maxf(float(l["end"]), cur))
+		if builder:
+			nxt = minf(nxt, cur + AUTO_STEP)
 		if cur < paid_until:
-			_flow(cur, minf(at, paid_until))
-		cur = at
-		var l: Dictionary = office(d[1])["lots"][d[2]]
-		office(d[1])["works"] = int(office(d[1]).get("works", 0)) + int(l["to"]) - int(l["t"])
-		l["t"] = int(l["to"])
-		l.erase("to")
-		l.erase("end")
-		l.erase("start")
-		state["stats"]["built"] = int(state["stats"].get("built", 0)) + 1
-		done.append({"office": d[1], "lot": d[2], "tier": int(l["t"])})
-		# the builder takes the free crane at once, offline too
-		for lid in auto_build(d[1], at):
-			var nl: Dictionary = office(d[1])["lots"][lid]
-			if float(nl["end"]) <= t:
-				due.append([float(nl["end"]), d[1], lid])
-	if cur < paid_until:
-		_flow(cur, paid_until)
+			_flow(cur, minf(nxt, paid_until))
+		cur = nxt
+		for id: String in offices():
+			var lots: Dictionary = office(id)["lots"]
+			for lid: String in lots:
+				var l: Dictionary = lots[lid]
+				if l.has("end") and float(l["end"]) <= cur:
+					l["t"] = int(l["to"])
+					l.erase("to")
+					l.erase("end")
+					l.erase("start")
+					state["stats"]["built"] = int(state["stats"].get("built", 0)) + 1
+					done.append({"office": id, "lot": lid, "tier": int(l["t"])})
+		# the builder takes free cranes at once
+		for id: String in offices():
+			auto_build(id, cur)
+		if cur >= t:
+			break
 	state["seen"] = t
-	for id: String in offices():
-		auto_build(id, t)
 	if is_away:
-		away = {"seconds": gap, "paid_s": paid_until - seen, "money": money() - m0,
+		var gone := {"seconds": gap, "paid_s": paid_until - seen,
+			"money": float(state["stats"].get("earned", 0.0)) - e0,
 			"built": done.size(),
 			"interest": float(state["stats"].get("interest", 0.0)) - i0,
 			"repaid": float(state["stats"].get("repaid", 0.0)) - r0,
-			"capped": gap > offline_cap_s()}
+			"auto": auto_started.size() - a0, "capped": gap > offline_cap_s()}
+		# a second absence before the first summary was seen adds up into it
+		if not away.is_empty():
+			for k: String in ["seconds", "paid_s", "money", "built", "interest", "repaid", "auto"]:
+				gone[k] = gone[k] + away.get(k, 0)
+			gone["capped"] = gone["capped"] or away.get("capped", false)
+		away = gone
 	return done
 
 
@@ -334,10 +417,10 @@ func _rate_h(kind: String) -> float:
 
 # the best interest cut a manager gives (a banker also lends you more)
 func _banker() -> float:
-	var cut := 0.0
+	var best := 0.0
 	for id: String in offices():
-		cut = maxf(cut, Economy.trait_of(manager(id), "interest"))
-	return cut
+		best = maxf(best, cut(id, "interest"))
+	return best
 
 
 func loan_rate_h(kind: String) -> float:
@@ -421,8 +504,16 @@ func repay(kind: String, amount: float = INF) -> float:
 
 
 func set_autopay(share: float) -> void:
-	if share in Economy.AUTOPAY:
-		state["autopay"] = share
+	state["autopay"] = _snap_autopay(share)
+
+
+# the autopay share nearest to `share` (numbers from JSON or a UI are never compared exactly)
+static func _snap_autopay(share: float) -> float:
+	var best: float = Economy.AUTOPAY[0]
+	for a: float in Economy.AUTOPAY:
+		if absf(a - share) < absf(best - share):
+			best = a
+	return best
 
 
 func autopay() -> float:
@@ -493,7 +584,7 @@ func payoff_minutes(share: float, extra_debt: float = 0.0, extra_rate_h: float =
 
 func buy_price(id: String, info: Dictionary) -> float:
 	return Economy.buy_price(info, int(info["base_tier"])) * plusvalia(id) \
-		* (1.0 - Economy.trait_of(manager(id), "land"))
+		* (1.0 - cut(id, "land"))
 
 
 # what owning part of the neighbourhood does to the price of the rest
@@ -530,10 +621,12 @@ func build_cost(id: String, l: Dictionary, to: int = -1) -> float:
 	if to < 0:
 		to = t0 + 1
 	var sum := 0.0
+	var step := 1.0
+	# each tier on the way pays the inflation of the tiers before it, as one at a time would
 	for t in range(t0 + 1, mini(to, 5) + 1):
-		sum += Economy.BUILD_COST[t]
-	return sum * float(l.get("pk", 1.0)) * inflation(id) \
-		* (1.0 - Economy.trait_of(manager(id), "cost"))
+		sum += Economy.BUILD_COST[t] * step
+		step *= 1.0 + Economy.WORKS_INFLATION
+	return sum * float(l.get("pk", 1.0)) * inflation(id) * (1.0 - cut(id, "cost"))
 
 
 # the highest tier a lot could be built up to with the money there is now (its own tier when
@@ -559,7 +652,7 @@ func build_time(id: String, from: int, to: int) -> float:
 	var sum := 0.0
 	for t in range(from + 1, mini(to, 5) + 1):
 		sum += Economy.BUILD_TIME[t]
-	return sum * (1.0 - Economy.trait_of(manager(id), "time"))
+	return sum * (1.0 - cut(id, "time"))
 
 
 func cranes(id: String) -> int:
@@ -584,6 +677,8 @@ func can_build(id: String, lot_id: String, to: int = -1) -> String:
 		return "Ya está en obras"
 	if int(l["t"]) >= int(l["mx"]):
 		return "No cabe más aquí" if int(l["mx"]) < 5 else "Ya es lo más alto"
+	if to >= 0 and to <= int(l["t"]):
+		return "Nada que construir"
 	if to > int(l["mx"]):
 		return "No cabe tan alto"
 	if cranes_busy(id) >= cranes(id):
@@ -603,6 +698,8 @@ func build(id: String, lot_id: String, to: int = -1, at: float = -1.0) -> String
 	if to < 0:
 		to = int(l["t"]) + 1
 	state["money"] = money() - build_cost(id, l, to)
+	# the works count (inflation) goes up when they start, so cranes started together pay it too
+	office(id)["works"] = int(office(id).get("works", 0)) + to - int(l["t"])
 	var t := now() if at < 0.0 else at
 	l["to"] = to
 	l["start"] = t
@@ -739,10 +836,10 @@ func refresh_cost(id: String) -> float:
 func refresh_pool(id: String) -> String:
 	if not managers_open(id):
 		return "Desde el Nv %d" % Economy.MANAGER_LEVEL
+	pool(id)
 	var c := refresh_cost(id)
 	if money() < c:
 		return "Te faltan " + Economy.money(c - money())
-	pool(id)
 	state["money"] = money() - c
 	_new_pool(id, now(), true)
 	return ""
@@ -755,6 +852,12 @@ func hire_cost(id: String, m: Dictionary) -> float:
 func can_hire(id: String, m: Dictionary) -> String:
 	if not managers_open(id):
 		return "Desde el Nv %d" % Economy.MANAGER_LEVEL
+	# only a candidate still in the pool as it is now
+	var there := false
+	for c: Dictionary in pool(id):
+		there = there or (int(c["slot"]) == int(m.get("slot", -1)) and c["name"] == m.get("name"))
+	if not there:
+		return "Ya no está"
 	var c := hire_cost(id, m)
 	if money() < c:
 		return "Te faltan " + Economy.money(c - money())

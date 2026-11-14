@@ -36,7 +36,8 @@ func _init() -> void:
 	_builder()
 	_broken_save()
 	_format()
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE))
+	for p in [SAVE, SAVE + ".bak", SAVE + ".tmp"]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 	if _bad > 0:
 		printerr("GAME CHECK FAILED: %d problems" % _bad)
 		quit(1)
@@ -394,17 +395,53 @@ func _builder() -> void:
 
 
 func _broken_save() -> void:
+	# a broken save with a good backup comes back from the backup
+	var g := _new_game()
+	g.state["money"] = 777777.0
+	g.save()
+	g.state["money"] = 888888.0
+	g.save()
 	var f := FileAccess.open(SAVE, FileAccess.WRITE)
 	f.store_string("{this is not json")
 	f.close()
-	var g := _game()
-	g.load_or_new()
-	_check(g.money() == Economy.START_MONEY, "a broken save starts a new game")
-	Store.write_json(SAVE, {"format": Game.FORMAT, "version": 1, "money": -50.0, "seen": _t,
-		"offices": "nonsense"})
 	var h := _game()
 	h.load_or_new()
-	_check(h.money() == 0.0 and h.offices().is_empty(), "odd numbers in a save are made sane")
+	_check(_near(h.money(), 777777.0, 1e-9) or _near(h.money(), 888888.0, 1e-9),
+		"a broken save comes back from its backup")
+	# with no readable copy at all: a new game, and the broken file kept aside
+	for p in [SAVE, SAVE + ".bak", SAVE + ".tmp"]:
+		var w := FileAccess.open(p, FileAccess.WRITE)
+		w.store_string("garbage")
+		w.close()
+	var k := _game()
+	k.load_or_new()
+	_check(k.money() == Economy.START_MONEY, "an unreadable save starts a new game")
+	var kept := false
+	for file in DirAccess.get_files_at(ProjectSettings.globalize_path("user://")):
+		if file.begins_with("game_check_save.corrupt-"):
+			kept = true
+			DirAccess.remove_absolute(ProjectSettings.globalize_path("user://" + file))
+	_check(kept, "the unreadable save is kept aside, not overwritten")
+	for p in [SAVE + ".bak", SAVE + ".tmp"]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
+	# odd values inside a readable save are made sane instead of crashing
+	Store.write_json(SAVE, {"format": Game.FORMAT, "version": 1, "money": [1, 2], "seen": _t,
+		"autopay": 0.0, "loans": {"quick": {"debt": "x"}, "bogus": {"debt": 5.0, "lent": 5.0}},
+		"offices": {"a": {"level": 99, "lots": {"l1": {"t": 9, "k": 1.0, "pk": 1.0, "mx": 12,
+		"to": 3, "end": _t + 10.0}, "l2": "nonsense", "l3": {"t": 2}}, "manager": "bob"},
+		"b": "nonsense"}})
+	var j := _game()
+	j.load_or_new()
+	_check(j.money() == 0.0, "money that is not a number becomes 0")
+	_check(j.total_debt() == 0.0, "malformed loans are dropped")
+	_check(j.offices().size() == 1 and j.level("a") == Economy.max_level(),
+		"malformed offices are dropped and levels clamped")
+	_check(j.owned_count("a") == 1 and int(j.lot("a", "l1")["t"]) == 5
+		and not j.lot("a", "l1").has("end"), "malformed lots are dropped or clamped")
+	_check(j.autopay() == 0.0, "autopay off survives a reload")
+	_play(j, 60.0)
+	_check(is_finite(j.money()), "a sanitized save plays on")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE + ".bak"))
 
 
 func _format() -> void:

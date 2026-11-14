@@ -14,6 +14,9 @@ const SLOP := 6.0
 const TICK := 0.25
 const SAVE_EVERY := 30.0
 
+# when the window last got the focus (engine ms): the click that brings it up is not a purchase
+static var focus_ms := -100000
+
 var screen: Screen
 var game: Game
 
@@ -45,6 +48,13 @@ func _ready() -> void:
 		print("App: away %d s, paid %d s, +%s" % [int(game.away["seconds"]),
 			int(game.away["paid_s"]), Economy.money(float(game.away["money"]))])
 	get_tree().set_auto_accept_quit(false)
+	# an office whose area file is gone cannot be played or seen: the game forgets it
+	var kept := {}
+	for o in Store.offices():
+		kept[o["id"]] = true
+	for id: String in game.offices().keys():
+		if not kept.has(id):
+			game.offices().erase(id)
 	var last: String = game.state.get("last_office", "")
 	for o in Store.offices():
 		if o["id"] == last:
@@ -86,9 +96,13 @@ func open_city(city_id: String) -> void:
 
 
 func place_office(city_id: String, lat: float, lon: float, place: String) -> void:
-	if Rules.too_close(lat, lon) or game.can_open_office() != "":
+	if Rules.too_close(lat, lon) or game.can_open_office() != "" or not _job.is_empty():
 		return
+	# paid when placed (the first is free), given back if the download is abandoned
+	var paid := game.pay_office()
+	game.save()
 	_start_job({"kind": "office", "city": city_id, "lat": lat, "lon": lon, "name": place,
+		"paid": paid,
 		"title": "Nueva oficina en %s" % place,
 		"query": BlockBaker.query(lat, lon, Rules.MAX_RADIUS),
 		"fake": Fixture.area.bind(lat, lon, Rules.MAX_RADIUS)})
@@ -132,6 +146,9 @@ func cancel_job() -> void:
 	_job = {}
 	_net.cancel()
 	if job.get("kind") == "office":
+		if float(job.get("paid", 0.0)) > 0.0:
+			game.state["money"] = game.money() + float(job["paid"])
+			game.save()
 		open_city(job["city"])
 	else:
 		show_cities()
@@ -228,8 +245,6 @@ func _bake_done(result: Dictionary) -> void:
 	}
 	data["office"] = meta
 	var size := Store.write_json(Store.office_path(id), data)
-	# the office is paid for (the first is free) once it is safely on disk
-	game.pay_office()
 	game.add_office(id, data.get("office_plot", ""))
 	game.save()
 	var st: Dictionary = data["stats"]
@@ -243,6 +258,10 @@ func _bake_done(result: Dictionary) -> void:
 		st["bake_ms"]] + "%d roads, %d blocks, %d plots (%d built), saved %d B" % [
 		st["roads"], st["blocks"], st["plots"], st["built"], size])
 	open_office(meta)
+
+
+func tick_game() -> void:
+	_advance()
 
 
 # pays the time since the last tick and tells the office on screen what finished or started
@@ -266,6 +285,8 @@ func _notification(what: int) -> void:
 			game.advance(game.now())
 			game.save()
 		get_tree().quit()
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN or what == NOTIFICATION_WM_WINDOW_FOCUS_IN:
+		focus_ms = Time.get_ticks_msec()
 	elif what == NOTIFICATION_WM_MOUSE_EXIT and screen != null:
 		# a widget left alone: no hover tints, no pops
 		screen.hover(Vector2(-100, -100))

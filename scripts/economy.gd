@@ -336,15 +336,13 @@ static func money(amount: float) -> String:
 	return ("-" if neg else "") + s
 
 
-# "45 s", "12 min", "3 h 20 min", "2 d 4 h"
+# "45 s", "12 min", "3 h 20 min", "2 d 4 h" (one style everywhere: no "m:ss")
 static func duration(seconds: float) -> String:
 	var s := maxi(0, ceili(seconds))
 	if s < 60:
 		return "%d s" % s
 	if s < 3600:
-		var m := s / 60
-		var r := s % 60
-		return "%d:%02d" % [m, r] if m < 10 else "%d min" % ceili(s / 60.0)
+		return "%d min" % ceili(s / 60.0)
 	if s < 86400:
 		var h := s / 3600
 		var m := (s % 3600) / 60

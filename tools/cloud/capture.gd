@@ -48,7 +48,8 @@ func _init() -> void:
 	DirAccess.make_dir_recursive_absolute(_out)
 	_wipe(Store.OFFICES)
 	for save in ["user://save.json", "user://save_fixture.json"]:
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(save))
+		for ext in ["", ".tmp", ".bak"]:
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(save + ext))
 	if fresh:
 		_wipe(Store.CITIES)
 	Store.reload()
@@ -75,7 +76,8 @@ func _init() -> void:
 		else:
 			map.set_zoom_step(1)
 			map.center_on(spot["lat"], spot["lon"])
-			# later offices need an office at level 3 and money: the capture just has them
+		# later offices need an office at level 3 and money: the capture just has them
+		if spot != _spots[0]:
 			_rich(3)
 		map.pick_latlon(spot["lat"], spot["lon"])
 		if spot["tag"] == "barcelona":
@@ -255,7 +257,12 @@ func _game(view: OfficeView, tag: String, n: int) -> int:
 	await _frames(2)
 	await _shot("%02d_game_%s_away" % [n, tag])
 	n += 1
+	# the card ignores taps for a moment after it shows (the click that focuses the window)
+	await _wait_s(OfficePlay.AWAY_GRACE_S + 0.2)
 	play.click(OfficePlay.AWAY_OK.get_center())
+	if not g.away.is_empty():
+		_fail("the welcome-back card did not close")
+		return n
 	# a fully grown area: level 5, every lot owned and built as high as it may go
 	_rich(5)
 	for lot in play.infos.size():
