@@ -10,6 +10,7 @@ extends Screen
 # cyan, grey when it is outside the office's radius); clicking it selects it (gold) and opens a
 # card with its street, zone, size, tier and asking price; Esc or the card's X closes the card.
 # A saved v2 area (small plots) is re-parcelled into lots when it is opened, and saved back.
+# Traffic drives cars over the drawing, as a child of its sprite.
 
 const ZOOMS: Array[int] = [1, 2, 3]
 const START_ZOOM := 1
@@ -55,6 +56,7 @@ var _picked := -1
 var _labels := {}
 # income pops: a gold "+$" rising off the roofs the player owns, one after another
 var _pop_t := 0.0
+var _traffic: Traffic
 
 
 # false when the saved file is missing or unreadable
@@ -84,6 +86,8 @@ func setup(meta: Dictionary) -> bool:
 			_owned += 1
 	_owned = maxi(_owned, 1)
 	_street_spots = _view.street_labels()
+	_traffic = Traffic.new()
+	_traffic.setup(block, _view.focus, meta["id"])
 	return true
 
 
@@ -96,6 +100,7 @@ func _ready() -> void:
 	_sprite = Sprite2D.new()
 	_sprite.centered = false
 	add_child(_sprite)
+	_sprite.add_child(_traffic)
 	_over = Node2D.new()
 	_over.draw.connect(_draw_over)
 	add_child(_over)
@@ -106,6 +111,7 @@ func _ready() -> void:
 
 func _on_drawn() -> void:
 	_sprite.texture = _view.texture
+	_traffic.attach(_view, _view.active_radius)
 	print("OfficeView: %s drawn %dx%d, build %d ms, gpu %d ms" % [office.get("id", ""),
 		roundi(_view.size.x), roundi(_view.size.y), _view.build_ms, _view.draw_ms])
 	_over.queue_redraw()
@@ -150,6 +156,7 @@ func _pan_to(at: Vector2) -> void:
 	_pan = at.clamp(view.position + view.size * 0.6 - size, view.position + view.size * 0.4)
 	_pan = (_pan / _zoom()).round() * _zoom()
 	_sprite.position = _pan
+	_traffic.set_view(Rect2(-_pan / _zoom(), Ui.CANVAS / _zoom()))
 	_over.queue_redraw()
 
 

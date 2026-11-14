@@ -1068,13 +1068,14 @@ func _street_furniture() -> void:
 				_close(0.0))
 
 
-# parked and passing cars in the lanes, a few per street, never in a junction
+# cars parked along the kerb, a few per street, never in a junction; only on streets wide enough
+# to leave Traffic's moving lanes clear (narrower ones have no parking, wider ones two lanes)
 func _cars() -> void:
 	var tints := ["RED", "CREAM", "CYAN_M", "taxi", "GOLD", "SL5"]
 	var k := 0
 	for road: Dictionary in _block["roads"]:
 		var w := float(road["width"])
-		if road["kind"] == "pedestrian" or w < 7.0:
+		if road["kind"] == "pedestrian" or w < 12.0 or w >= 18.0:
 			continue
 		var line := _pts(road["line"])
 		for i in range(1, line.size()):
@@ -1093,7 +1094,7 @@ func _cars() -> void:
 				if _near_junction(q, 16.0):
 					continue
 				var lane := 1.0 if Iso.h01(seed + "l") < 0.5 else -1.0
-				q += dir.orthogonal() * lane * maxf(1.6, w * 0.22)
+				q += dir.orthogonal() * lane * (w * 0.5 - 1.1)
 				_car(q, dir, tints[int(Iso.h01(seed + "c") * tints.size())], seed)
 
 
