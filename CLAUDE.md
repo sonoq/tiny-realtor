@@ -282,7 +282,7 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   house in its head; an object of no lot, so it sorts, outlines and goes through the depth pass
   like a lamp but never into the pick image) at `OfficeMark.at`; street trees, lamps, people and
   garden trees keep `MARK_CLEAR` from it. The lot the office was placed on is an ordinary lot.
-  Owned = teal roofs + cyan flags; an owned solar flies a flag instead of the sale sign.
+  Owned = teal roofs (tiers 1-3; tall lots keep their own roofs, a sea of teal read as blue lids) + cyan flags; an owned solar flies a flag instead of the sale sign.
   Each lot's ground ops (`lot_ground`), shadows (`lot_shadows`) and objects are kept apart so
   `rebuild_lot` can lay it out again; `lots[i].roof` is where its pops rise; `tags` off leaves the
   price tags to the game. Every object records its `lot`; buildings fade per lot (`lots[i].active`

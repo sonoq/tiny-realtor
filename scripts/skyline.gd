@@ -23,7 +23,7 @@ extends RefCounted
 #   "base": the lot's ground (palette name), "trees": square metres per tree, "kind": archetype}
 # A mass is drawn bottom to top and outlined in ink as one; masses are in painter's order.
 # Pieces: BOX {"foot", "z0", "z1", "style" (WorldShader), "ramp", "variant", "roof" (ramp or -1),
-#   "rim", "top" (a building's main roof: teal when owned), "spire" (px), "flag"}; HIP (a pyramid
+#   "rim", "top" (a building's main roof), "spire" (px), "flag"}; HIP (a pyramid
 #   roof: "foot" (4 corners), "z0", "z1", "rh", "ramp", "roof"); BRIDGE, LAWN, POOL, SOLAR, PAD lie
 #   on "foot" at "z1" (BRIDGE spans z0..z1; a LAWN with "deck" is a paved terrace with a planted
 #   rim); TREE "at" + "z"; SIGN "a", "b", "z", "tint";
@@ -278,7 +278,8 @@ static func _tower(foot: PackedVector2Array, z0: float, top: float, m: Dictionar
 			elif crown == C_GOLD and int(m["k"]) == M_GLASS:
 				pieces.append(_box(foot, z0, top - CROWN, m, true, 1))
 				main = _box(cf, top - CROWN, top, m, false, 2)
-				main["roof"] = Pal.ramp_of("GLS")
+				# a steel roof behind the gold crown: a glass one read as a bright blue lid
+				main["roof"] = Pal.ramp_of("STL")
 				pieces.append(main)
 			else:
 				var sb := 6.0 if crown != C_SETBACK else 5.0
@@ -317,7 +318,7 @@ static func _tower(foot: PackedVector2Array, z0: float, top: float, m: Dictionar
 				pieces.append(main)
 				var roof: int = trim if lot["tier"] == 5 else s["trim"]
 				if roof == Pal.ramp_of("CON") or roof == Pal.ramp_of("STL"):
-					roof = Pal.ramp_of("TEAL")
+					roof = Pal.ramp_of("TER")
 				pieces.append({"look": HIP, "foot": rect, "z0": top - rh - 1.0,
 					"z1": top - rh, "rh": rh, "ramp": m["ramp"], "roof": roof})
 				if tallest:

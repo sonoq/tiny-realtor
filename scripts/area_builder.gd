@@ -928,10 +928,9 @@ func _piece(id: String, p: Dictionary, owned: bool) -> void:
 	var z1: float = p.get("z1", 0.0)
 	match int(p["look"]):
 		Skyline.BOX:
-			var roof: int = p.get("roof", -1)
-			if owned and p.get("top", false):
-				roof = Pal.ramp_of("TEAL")
-			_pt.prism(foot, z0, z1, p["style"], p["ramp"], roof, p.get("rim", true),
+			# a tall lot keeps its own roofs when owned (teal ones read as a sea of blue); its flag
+			# says it is yours
+			_pt.prism(foot, z0, z1, p["style"], p["ramp"], p.get("roof", -1), p.get("rim", true),
 				p.get("variant", 0), z0 == 0.0)
 		Skyline.HIP:
 			_pt.pitched(foot, z0, z1, p["ramp"], p["roof"], p["rh"], 0.45,
