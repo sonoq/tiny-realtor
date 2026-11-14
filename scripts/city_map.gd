@@ -197,7 +197,7 @@ func wheel(at: Vector2, steps: int) -> void:
 
 
 func back() -> bool:
-	app.show_cities()
+	app.show_world(city["id"])
 	return true
 
 
