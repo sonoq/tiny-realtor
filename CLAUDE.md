@@ -589,7 +589,8 @@ before | after) grows every lot to its max tier (`grown_<tag>.png` x2 round the 
 street and shoots its plate (`click_street_name.png`); fails if a plate shows before the click,
 none after it, or it outlives the next click. `docs/screenshots/variety/` holds them for
 Valencia (`grown_before_after.png`: the grown area at x2, the twin glass clusters | every lot its
-own; `top_tiers_gallery.png`, `bloque_vs_max.png`, `click_street_name.png`).
+own; `grown_far_before_after.png` the same at x1; `top_tiers_gallery.png`, `works_vs_built.png`,
+`bloque_vs_max.png`, `click_street_name.png`).
 `docs/screenshots/skyline/` keeps the earlier height-cap work (the four old layouts).
 `econ_sim.gd [-- --file=/abs/office.json] [--days=N] [--only=ideal,widget,lazy,loans,abuser,absent]`
 plays kinds of player and prints milestones and snapshots (fixture area by default); it exits 1
