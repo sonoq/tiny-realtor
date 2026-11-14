@@ -60,6 +60,13 @@ const BRIDGE_H := 4.0
 # the lower buildings round the tall ones (px): mid-rise by tier, and low pavilions
 const MID_Z := {4: Vector2(16.0, 28.0), 5: Vector2(22.0, 36.0)}
 const LOW_Z := Vector2(9.0, 13.0)
+# green in the open paving (Oscar: no sandy wasteland): open ground under this many m2 stays paved;
+# bigger is cut into planted squares (side in m, by lot) with cement paths between them, or for
+# some lots one lawn, a small park
+const GREEN_MIN := 140.0
+const GREEN_CELL := Vector2(9.0, 14.0)
+const GREEN_PATH := 2.6
+const GREEN_PARK := 0.25
 
 # a lot's materials: the tall element, a second kind for the others, the lower buildings, the
 # trim (bands, crowns) and the flat roofs. A material is [kind, ramp, glass / window variant].
@@ -158,6 +165,7 @@ static func plan(tier: int, poly: PackedVector2Array, levels: int, id: String,
 		_one_tower(out, lot)
 	if not int(out["kind"]) in [PERIMETER, LSLAB, CORNER]:
 		_fill(out, lot)
+	_greens(out, lot)
 	return out
 
 
@@ -823,6 +831,99 @@ static func _garden(out: Dictionary, garden: PackedVector2Array, id: String,
 		out["ground"].append([Iso.offset(pool, -0.6), "CYAN_M"])
 		out["ground"].append([Iso.offset(pool, -1.2), "CYAN"])
 		out["built"].append(pool)
+
+
+# the paving the plan leaves open (a rim along the lot's edges and paths round every building and
+# garden kept), planted: squares on a grid square to the lot, each its own kind, about half to
+# four fifths of them by lot, or one lawn for the whole piece; small pieces stay paved
+static func _greens(out: Dictionary, lot: Dictionary) -> void:
+	if out["base"] == "GRASS":
+		return
+	var id: String = lot["id"]
+	var poly: PackedVector2Array = lot["poly"]
+	var open: Array[PackedVector2Array] = [Iso.offset(poly, -2.0)]
+	var cuts: Array[PackedVector2Array] = []
+	for b: PackedVector2Array in out["built"]:
+		cuts.append(Iso.offset(b, 2.2))
+	for g: Array in out["ground"]:
+		cuts.append(Iso.offset(g[0], 1.6))
+	for t in cuts:
+		if t.size() < 3:
+			continue
+		var tb := Geo.bounds(t)
+		var next: Array[PackedVector2Array] = []
+		for part in open:
+			if part.size() < 3:
+				continue
+			if Geo.bounds(part).intersects(tb):
+				next.append_array(Geo.cut_out(part, t))
+			else:
+				next.append(part)
+		open = next
+	var rect := Iso.min_rect(poly, 1.0)
+	if rect.size() < 4:
+		return
+	var ax := (rect[1] - rect[0]).normalized()
+	var ay := ax.orthogonal()
+	var cell := lerpf(GREEN_CELL.x, GREEN_CELL.y, Iso.h01(id + "gc"))
+	var share := 0.5 + 0.3 * Iso.h01(id + "gs")
+	var park := Iso.h01(id + "gp") < GREEN_PARK
+	var step := cell + GREEN_PATH
+	for n in open.size():
+		var part := Iso.clean(open[n])
+		if part.size() < 3 or Iso.area(part) < GREEN_MIN:
+			continue
+		var key := "%s_gn%d" % [id, n]
+		if park:
+			_lawn(out, Iso.offset(part, -1.0), key, 3)
+			continue
+		var lo := Vector2(INF, INF)
+		var hi := Vector2(-INF, -INF)
+		for q in part:
+			var t := Vector2(q.dot(ax), q.dot(ay))
+			lo = lo.min(t)
+			hi = hi.max(t)
+		var nx := ceili((hi.x - lo.x + GREEN_PATH) / step)
+		var ny := ceili((hi.y - lo.y + GREEN_PATH) / step)
+		var o := (lo + hi) * 0.5 - Vector2(nx, ny) * step * 0.5 + Vector2.ONE * GREEN_PATH * 0.5
+		var planted := 0
+		for i in nx:
+			for j in ny:
+				var ck := "%s_%d_%d" % [key, i, j]
+				if Iso.h01(ck) > share:
+					continue
+				var u := o.x + i * step
+				var v := o.y + j * step
+				var sq := PackedVector2Array([ax * u + ay * v, ax * (u + cell) + ay * v,
+					ax * (u + cell) + ay * (v + cell), ax * u + ay * (v + cell)])
+				for piece in Geo.clip(sq, part):
+					piece = Iso.clean(piece)
+					if piece.size() < 3 or Iso.area(piece) < 30.0 \
+							or Iso.offset(piece, -1.2).size() < 3:
+						continue
+					_lawn(out, piece, ck, int(Iso.h01(ck + "k") * 3.0))
+					planted += 1
+		# a big piece the dice left bare gets one lawn anyway
+		if planted == 0:
+			_lawn(out, Iso.offset(part, -1.5), key, 3)
+
+
+# one planted patch: 0 a lawn in a dark hedge, 1 a lawn with a bed of shrubs in the middle,
+# 2 a light meadow in a hedge, 3 a park lawn with a lighter middle
+static func _lawn(out: Dictionary, foot: PackedVector2Array, key: String, kind: int) -> void:
+	if foot.size() < 3 or Iso.area(foot) < 20.0:
+		return
+	var rim: String = ["GRASS_DD", "GRASS_D", "GRASS_D", "GRASS_D"][kind]
+	var fill: String = ["GRASS", "GRASS", "GRASS_L", "GRASS"][kind]
+	out["ground"].append([foot, rim])
+	var inner := Iso.offset(foot, -0.8)
+	if inner.size() < 3:
+		return
+	out["ground"].append([inner, fill])
+	if kind == 1 or kind == 3:
+		var mid := Iso.offset(inner, -2.2 if kind == 1 else -3.5)
+		if mid.size() >= 3 and Iso.area(mid) > 8.0:
+			out["ground"].append([mid, "GRASS_D" if kind == 1 else "GRASS_L"])
 
 
 # --- the new ones ---------------------------------------------------------------------------------
