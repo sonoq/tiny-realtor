@@ -4,8 +4,9 @@ extends SceneTree
 # water polygon must triangulate and sit inside the disc, every lot must face a street (its
 # `fronts` sides lie along one), the lot count must stay in LOTS (a 500 m area is a few hundred
 # lots, not thousands), and the file must round-trip through JSON. By default it uses the made-up
-# fixtures (no network). With a raw Overpass file it bakes that; with a saved v2 area it checks
-# the v2 -> v3 upgrade:
+# fixtures (no network); the office's marker must stand on open ground (no lot, no asphalt) near
+# the clicked point. With a raw Overpass file it bakes that; with a saved v2 area it checks the
+# v2 -> v3 upgrade:
 #
 #   godot --headless --path . --script res://tools/bake_check.gd
 #   godot --headless --path . --script res://tools/bake_check.gd -- --raw=/abs/area.json \
@@ -105,6 +106,7 @@ func _check_block(block: Dictionary, label: String, radius: float) -> void:
 			roundi(LOTS.y * scale)])
 	if block["office_plot"] == "":
 		_fail(label + " has no office lot")
+	_check_mark(block, label)
 	for key in ["plots", "blocks", "greens", "courts", "water", "land"]:
 		for item: Dictionary in block[key]:
 			_check_poly(item["poly"], "%s %s %s" % [label, key, item.get("id", item.get("kind"))],
@@ -117,6 +119,39 @@ func _check_block(block: Dictionary, label: String, radius: float) -> void:
 			_fail("%s road with %d points" % [label, road["line"].size()])
 	if JSON.parse_string(text) == null:
 		_fail(label + " does not round-trip through JSON")
+
+
+# the office's pin: kept in the file, on open ground, near the clicked point, and found again
+# the same from the file alone (an older file works it out when it is drawn)
+func _check_mark(block: Dictionary, label: String) -> void:
+	var kept: Variant = block.get("office_mark")
+	if not kept is Array or (kept as Array).size() != 2:
+		_fail(label + " has no office_mark")
+		return
+	var at := Vector2(float(kept[0]), float(kept[1]))
+	var copy: Dictionary = JSON.parse_string(JSON.stringify(block))
+	copy.erase("office_mark")
+	var t0 := Time.get_ticks_usec()
+	var again := OfficeMark.spot(copy)
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0
+	print("  office mark at (%.1f, %.1f), %.1f m from the click, found in %.1f ms" % [at.x, at.y,
+		at.length(), ms])
+	if again.distance_to(at) > 0.2:
+		_fail("%s office mark %s is not found again from the file (%s)" % [label, at, again])
+	if at.length() > OfficeMark.REACH:
+		_fail("%s office mark %.1f m from the click" % [label, at.length()])
+	for p: Dictionary in block["plots"]:
+		if Geometry2D.is_point_in_polygon(at, _poly(p["poly"])):
+			_fail("%s office mark stands in lot %s" % [label, p["id"]])
+	for r: Dictionary in block["roads"]:
+		if r["kind"] == "pedestrian":
+			continue
+		var line := _poly(r["line"])
+		for i in range(1, line.size()):
+			var d := Geometry2D.get_closest_point_to_segment(at, line[i - 1], line[i]).distance_to(at)
+			if d < float(r["width"]) * 0.5:
+				_fail("%s office mark stands on %s" % [label, r["name"]])
+				return
 
 
 # every lot names at least one street side, and each named side runs along a street's kerb
