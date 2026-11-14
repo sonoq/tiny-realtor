@@ -43,8 +43,6 @@ const CAR_TURN := 6.0
 const CAR_SLOW := 1.5
 # a granted car this close along its way (m) crosses first
 const GRANTED_NEAR := 50.0
-# half the band (m, along the street) a walker crossing takes, for the cars standing on it
-const WALK_BAND := 1.0
 # a walker counts as in sight this many art pixels beyond the view
 const SPRITE_PAD := 12.0
 # grid cell (m) for finding walkers near a walker
@@ -95,6 +93,7 @@ var moved := PackedFloat32Array()
 var still := PackedFloat32Array()
 
 var _rng := RandomNumberGenerator.new()
+var _builder: Thread
 var _origin := Vector2.ZERO
 var _view := Rect2()
 var _centre := Vector2.ZERO
@@ -114,7 +113,13 @@ func setup(block: Dictionary, origin: Vector2, seed_key: String, cars: Traffic) 
 	traffic = cars
 	_rng.seed = (seed_key + "/walk").hash()
 	net = WalkNet.new()
-	net.build(block)
+	# built on a thread while the office is drawn (a few hundred ms on a real area), from its own
+	# copy of what it reads
+	var parts := {"radius_m": block.get("radius_m", 500.0)}
+	for key: String in ["roads", "blocks", "plots", "courts"]:
+		parts[key] = (block.get(key, []) as Array).duplicate(true)
+	_builder = Thread.new()
+	_builder.start(net.build.bind(parts))
 	edge.resize(CAP)
 	dir.resize(CAP)
 	seg.resize(CAP)
@@ -139,7 +144,7 @@ func setup(block: Dictionary, origin: Vector2, seed_key: String, cars: Traffic) 
 	pos.resize(CAP)
 	prev.resize(CAP)
 	fwd.resize(CAP)
-	_half = net.radius + 40.0
+	_half = float(block.get("radius_m", 500.0)) + 40.0
 	_cells = ceili(_half * 2.0 / CELL)
 	_cell_first.resize(_cells * _cells)
 	_cell_first.fill(-1)
@@ -156,6 +161,8 @@ func set_view(view: Rect2) -> void:
 func set_region(centre: Vector2, reach: float) -> void:
 	_centre = centre
 	_reach = reach * REGION
+	if _builder != null:
+		return
 	var want := 0.0
 	_near.clear()
 	_near_total = 0.0
@@ -172,7 +179,17 @@ func set_region(centre: Vector2, reach: float) -> void:
 	target = clampi(roundi(want), 0, CAP)
 
 
+# waits for the network if it is still being built (and then takes the region it missed)
+func ensure() -> void:
+	if _builder == null:
+		return
+	_builder.wait_to_finish()
+	_builder = null
+	set_region(_centre, _reach / REGION)
+
+
 func populate() -> void:
+	ensure()
 	for k in target * 4:
 		if count >= target:
 			break
@@ -181,6 +198,7 @@ func populate() -> void:
 
 # one tick (Traffic.TICK), after the cars have moved
 func step() -> void:
+	ensure()
 	var t0 := Time.get_ticks_usec()
 	_clock += 1
 	for i in count:
@@ -238,7 +256,13 @@ func _walk(i: int) -> void:
 	var by := _move(i, go)
 	moved[i] = by
 	still[i] = 0.0 if by > 0.0 else still[i] + Traffic.TICK
-	if by < go * 0.5 and state[i] == WALK:
+	if by < go * 0.5 and state[i] == WALK and k == WalkNet.CROSS and on_cross[i] < 0 \
+			and t[i] <= _far_kerb(i):
+		# queued behind someone waiting at the kerb: waits too
+		state[i] = WAIT
+		timer[i] = 0.0
+		pause_for[i] = 0.5
+	elif by < go * 0.5 and state[i] == WALK:
 		stuck[i] += Traffic.TICK
 		if stuck[i] > STUCK_TURN:
 			_turn(i)
@@ -321,8 +345,9 @@ func _face(i: int, by: float) -> void:
 		frame[i] = 1
 		return
 	stride[i] += by
+	# stride, together, the other stride, together
 	var phase := int(stride[i] / STRIDE) % 4
-	frame[i] = [0, 1, 2, 1][phase]
+	frame[i] = phase if phase < 3 else 1
 
 
 # at the end of its edge: on along another one from that node (not straight back unless it is
@@ -369,6 +394,9 @@ func _weight(i: int, h: int, back: int) -> float:
 
 
 func _enter(i: int, h: int, rest: float) -> void:
+	# off its crossing's edge, off the crossing (a kerb can lie right at the edge's end)
+	if on_cross[i] >= 0:
+		_release(i)
 	var e := h >> 1
 	edge[i] = e
 	dir[i] = 1 if (h & 1) == 0 else -1
@@ -440,11 +468,14 @@ func _clear(c: int) -> bool:
 		if d.length_squared() > 4900.0:
 			continue
 		var hl := tr.size[j] * 0.5
-		if absf(d.dot(across)) < reach and absf(d.dot(along)) < WALK_BAND + hl + 0.4:
+		if absf(d.dot(across)) < reach and absf(d.dot(along)) < WalkNet.BAND + hl + 0.4:
 			return false
 		var dist := car_distance(j, c)
 		if dist == INF:
 			continue
+		# its front already in the band
+		if dist <= 0.05:
+			return false
 		var v := tr.v[j]
 		if tr.granted[j] == 1 and dist < GRANTED_NEAR:
 			return false
@@ -484,7 +515,7 @@ func car_distance(j: int, c: int) -> float:
 func _upkeep() -> void:
 	var i := 0
 	while i < count:
-		var gone := pos[i].distance_to(_centre) > _reach or stuck[i] > 30.0
+		var gone := pos[i].distance_to(_centre) > _reach or still[i] > 30.0
 		if gone and not _visible(pos[i]):
 			_remove(i)
 			recycled += 1

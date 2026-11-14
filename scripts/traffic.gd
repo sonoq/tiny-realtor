@@ -127,6 +127,8 @@ var _drawn := PackedVector2Array()
 var _wpx := PackedVector2Array()
 var _wdrawn := PackedVector2Array()
 var _order := PackedInt32Array()
+# per sprite (cars, then walkers) its ground depth, bigger is nearer
+var _keys := PackedFloat32Array()
 var _quad_pts := PackedVector2Array()
 var _quad_uv := PackedVector2Array()
 var _quad_col := PackedColorArray()
@@ -173,6 +175,7 @@ func setup(block: Dictionary, origin: Vector2, seed_key: String) -> void:
 	_exit.resize(CAP)
 	_link.resize(CAP)
 	_order.resize(QUADS)
+	_keys.resize(QUADS)
 	_wpx.resize(Walkers.CAP)
 	_wdrawn.resize(Walkers.CAP)
 	_quad_pts.resize(QUADS * 4)
@@ -236,6 +239,8 @@ func set_view(rect: Rect2) -> void:
 # fills the streets near the view and lets them settle for a few seconds, so the first frame
 # already shows cars queued at junctions rather than all freshly placed
 func populate() -> void:
+	# the crossings: where new cars may not start
+	walkers.ensure()
 	for k in target * 4:
 		if count >= target:
 			break
@@ -311,6 +316,12 @@ func _process(delta: float) -> void:
 		_wpx[i] = q
 	if moved:
 		queue_redraw()
+
+
+func _notification(what: int) -> void:
+	# never leave the walking network's thread running
+	if what == NOTIFICATION_PREDELETE and walkers != null:
+		walkers.ensure()
 
 
 # one tick of the simulation
@@ -910,11 +921,13 @@ func _draw() -> void:
 	var n_all := count + walkers.count
 	for k in n_all:
 		_order[k] = k
+		_keys[k] = pos[k].x - pos[k].y if k < count \
+			else walkers.pos[k - count].x - walkers.pos[k - count].y
 	for a in range(1, n_all):
 		var x := _order[a]
-		var dx := _sort_key(x)
+		var dx := _keys[x]
 		var b := a - 1
-		while b >= 0 and _sort_key(_order[b]) > dx:
+		while b >= 0 and _keys[_order[b]] > dx:
 			_order[b + 1] = _order[b]
 			b -= 1
 		_order[b + 1] = x
@@ -961,14 +974,6 @@ func _draw() -> void:
 			_quad_col[o + c] = col
 	RenderingServer.canvas_item_add_triangle_array(get_canvas_item(), _quad_idx, _quad_pts,
 		_quad_col, _quad_uv)
-
-
-# depth order of sprite x (cars, then walkers): bigger is nearer
-func _sort_key(x: int) -> float:
-	if x < count:
-		return pos[x].x - pos[x].y
-	var w := x - count
-	return walkers.pos[w].x - walkers.pos[w].y
 
 
 static var _shader: Shader

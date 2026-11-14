@@ -101,8 +101,8 @@ func build(block: Dictionary) -> void:
 	radius = float(block.get("radius_m", 500.0))
 	var roads: Array = block.get("roads", [])
 	for road: Dictionary in roads:
-		var line := _line(road["line"])
-		var half := float(road["width"]) * 0.5
+		var line := _line(road.get("line", []))
+		var half := float(road.get("width", 8.0)) * 0.5
 		var walk := 1.0 if road.get("kind", "") == "pedestrian" else 0.0
 		for i in range(1, line.size()):
 			var lo := (line[i - 1].min(line[i]) - Vector2.ONE * (half + KERB_OUT)) / SEG_CELL
@@ -126,7 +126,7 @@ func build(block: Dictionary) -> void:
 					var cell := Vector2i(cx, cy)
 					if not _blocks.has(cell):
 						_blocks[cell] = []
-					_blocks[cell].append(poly)
+					_blocks[cell].append([box, poly])
 	# the walkways: runs of each block's ring that lie on a pavement
 	var runs: Array[PackedVector2Array] = []
 	var closed: Array[bool] = []
@@ -226,7 +226,7 @@ func build(block: Dictionary) -> void:
 				inside = true
 			else:
 				inside = false
-			q += 0.25
+			q += 0.5
 		if slant:
 			continue
 		if spans.is_empty():
@@ -291,8 +291,13 @@ func _crossing(n0: int, n1: int, a: Vector2, b: Vector2, k0: float, k1: float, f
 # cross or meet without sharing a point (as RoadNet splits them), all unpainted
 static func zebra_spots(roads: Array, rad: float) -> Array[Dictionary]:
 	var lines: Array[PackedVector2Array] = []
+	var kept: Array = []
 	for road: Dictionary in roads:
-		lines.append(_line(road["line"]))
+		var line := _line(road.get("line", []))
+		if line.size() >= 2:
+			lines.append(line)
+			kept.append(road)
+	roads = kept
 	var out := _spots(roads, lines, rad, true)
 	var split: Array[PackedVector2Array] = []
 	for line in lines:
@@ -343,8 +348,9 @@ static func _spots(roads: Array, lines: Array[PackedVector2Array], rad: float,
 						d = d.normalized() * (ARM_MIN + 1.0)
 				if d.length() < ARM_MIN:
 					continue
-				arms.append({"road": h[0], "dir": d.normalized(), "width": float(road["width"]),
-					"walk": road["kind"] == "pedestrian"})
+				arms.append({"road": h[0], "dir": d.normalized(),
+					"width": float(road.get("width", 8.0)),
+					"walk": road.get("kind", "") == "pedestrian"})
 		if arms.size() < 3:
 			continue
 		for arm in arms:
@@ -414,7 +420,7 @@ func bands(rn: RoadNet, p: int) -> PackedFloat32Array:
 	for cy in range(c0.y, c1.y + 1):
 		for cx in range(c0.x, c1.x + 1):
 			for c: int in _cgrid.get(Vector2i(cx, cy), PackedInt32Array()):
-				if seen.has(c) or c_free[c] == 1 or c_edge[c] < 0:
+				if seen.has(c) or c_free[c] == 1:
 					continue
 				seen[c] = true
 				var r := _through(line, c)
@@ -530,8 +536,10 @@ func _runs_of(ring: PackedVector2Array, poly: PackedVector2Array,
 func _on_pavement(q: Vector2) -> bool:
 	if q.length() > radius - 3.0:
 		return false
-	for poly: PackedVector2Array in _blocks.get(Vector2i(floori(q.x / SEG_CELL),
-			floori(q.y / SEG_CELL)), []):
+	for item: Array in _blocks.get(Vector2i(floori(q.x / SEG_CELL), floori(q.y / SEG_CELL)), []):
+		if not (item[0] as Rect2).has_point(q):
+			continue
+		var poly: PackedVector2Array = item[1]
 		if Geometry2D.is_point_in_polygon(q, poly):
 			return false
 		for k in poly.size():
@@ -572,8 +580,8 @@ func _march(m: Vector2, u: Vector2, half: float, runs: Array[PackedVector2Array]
 				out = [r, run_cum[r][k - 1] + a.distance_to(hit), hit]
 		if not out.is_empty():
 			return out
-		for poly: PackedVector2Array in _blocks.get(key, []):
-			if Geometry2D.is_point_in_polygon(q, poly):
+		for item: Array in _blocks.get(key, []):
+			if (item[0] as Rect2).has_point(q) and Geometry2D.is_point_in_polygon(q, item[1]):
 				return []
 		d += 1.0
 	return []
@@ -681,7 +689,7 @@ func _cut_run(line: PackedVector2Array, c: PackedFloat32Array, is_closed: bool, 
 		# which hand the block is on
 		var sg := seg_at(e, length[e] * 0.5, 0)
 		var d := direction(e, sg)
-		var probe := point(e, length[e] * 0.5, sg) + Vector2(d.y, -d.x) * RING_OUT
+		var probe := point(e, length[e] * 0.5, sg) + Vector2(d.y, -d.x) * RING_OUT * 1.6
 		side[e] = 1 if Geometry2D.is_point_in_polygon(probe, poly) else -1
 
 
