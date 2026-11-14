@@ -130,7 +130,7 @@ func _ready() -> void:
 	_set_zoom(_zoom_i)
 
 
-# a full-window panel (bank, manager) hides the map: the cars wait under it and drive on when
+# a full-window panel (bank, office tab) hides the map: the cars wait under it and drive on when
 # it closes
 func _process(_delta: float) -> void:
 	var hidden := _play.panel_kind() != ""

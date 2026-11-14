@@ -305,7 +305,7 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   the active radius and darkened per pixel in cast shadows, via the palette's tables
   (`blend_disabled`, never off-palette).
   `frozen` + `run(n)` let tools step it. In the game OfficeView freezes and hides it while a
-  full-window panel (bank, manager) covers the map, and re-attaches it to the new drawing and
+  full-window panel (bank, office tab) covers the map, and re-attaches it to the new drawing and
   radius after a level-up.
 - `car_sprites.gd` (`CarSprites`) - the vehicles (5 car colours, taxi, 2 vans, bus) in 16
   headings, with and without brake lights, drawn once per session with Painter + the facade
