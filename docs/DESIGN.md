@@ -12,12 +12,17 @@ Abres oficinas inmobiliarias en barrios reales del mundo, compras terrenos grand
 
 ## 2. Pantallas
 
-### Mapa del mundo
-- Un mapa del mundo en pixel art, dibujado con matemáticas a partir de las costas de **Natural Earth** (dominio público). Se hará más adelante.
-- En él se ven tus oficinas repartidas por las ciudades.
+### Mapa del mundo (hecho: es la primera pantalla)
+- Un mapamundi en pixel art con los colores nocturnos del mapa de la ciudad, sacado de las costas, lagos y fronteras de **Natural Earth** (dominio público, `docs/NATURAL_EARTH.md`). Viene dentro del juego como cuatro imágenes (una por nivel de zoom, unos 265 KB); no se descarga nada.
+- Se arrastra para moverlo y se acerca con la rueda o con + y − en saltos enteros: x1 (el mundo entero), x2, x4, x8 (Europa) y x16 (España, con Barcelona y Valencia ya separadas).
+- Cada ciudad del juego es un puntito; al pasar el ratón se ve su nombre. Las ciudades donde tienes oficinas llevan la chincheta dorada (la misma que en la vista de la oficina) con el número de oficinas.
+- Las ciudades que quedan demasiado juntas para pulsarlas se agrupan en un círculo con un número: si son pocas, al pulsarlo sale una lista pequeña; si son muchas, el mapa se acerca solo hasta separarlas.
+- Pulsar una ciudad abre su mapa. Una ciudad con oficinas (o un grupo) abre la lista, donde cada oficina tiene su fila: pulsarla abre la oficina directamente.
+- Arriba a la derecha, tu dinero y lo que ganas por minuto; un botón de lista abre la lista de ciudades de siempre.
+- Volver: desde la oficina se va al mapa de su ciudad y de ahí al mapamundi (centrado en esa ciudad). Esc en el mapamundi cierra el juego. Al abrir el juego se sigue entrando directamente en la última oficina.
 
 ### Elegir ciudad
-- Una lista de ciudades que viene **dentro del juego** (de **GeoNames**, por ejemplo las 500 más grandes, unos 30 KB).
+- Una lista de ciudades que viene **dentro del juego** (de **GeoNames**, por ejemplo las 500 más grandes, unos 30 KB). Hoy son 31 ciudades; la lista se abre desde el botón del mapamundi.
 - No hay buscador en vivo: las normas del buscador público de OpenStreetMap (Nominatim) prohíben el autocompletado.
 
 ### Mapa de la ciudad

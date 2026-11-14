@@ -1,16 +1,20 @@
 extends SceneTree
 
 # Boots the real game (res://main.tscn) and drives the whole map flow like a player, saving a PNG
-# at each step: the city list, Barcelona's map, the office cursor, the confirm box, the download,
-# the office view, pointing at a lot and selecting another (its card); a second office in Tokyo
-# and a third in Warsaw; and the red "too close" cursor; then the busy-server screen, and the first
-# office again close up on its moving traffic. In the first office it also plays the game: the
-# money HUD, the office's pin pointed at, a lot's buy card, buying (with its undo toast), works
-# with a crane in progress, the office tab (opened from the pin and from the level line) and a
-# level-up in it, the bank and a loan sheet, the office tab's manager page, the welcome-back
-# summary, a fully grown area and the 200 px window. It needs a real display (run it under
-# xvfb-run, see tools/cloud/screenshot.sh), because a headless run renders nothing a viewport
-# could hand back.
+# at each step: the world map it opens on, the city list (from the map's list button), Barcelona's
+# map, the office cursor, the confirm box, the download, the office view, pointing at a lot and
+# selecting another (its card); a second office in Tokyo and a third in Warsaw; and the red "too
+# close" cursor; then the busy-server screen, and the first office again close up on its moving
+# traffic. In the first office it also plays the game: the money HUD, the office's pin pointed at,
+# a lot's buy card, buying (with its undo toast), works with a crane in progress, the office tab
+# (opened from the pin and from the level line) and a level-up in it, the bank and a loan sheet,
+# the office tab's manager page, the welcome-back summary, a fully grown area and the 200 px
+# window. At the end the world map (`NN_world_*`): a Valencia office placed from it (world -> a big
+# group zoomed into -> city -> office, then back -> city map -> back -> the world centred on
+# Valencia), the whole world with the four offices' pins, Europe at x8, a city pointed at, Spain at
+# x16, the list a city with an office opens (its office row opens the office), Tokyo, the city list
+# and back, and the 200 px window. It needs a real display (run it under xvfb-run, see
+# tools/cloud/screenshot.sh), because a headless run renders nothing a viewport could hand back.
 #
 #   godot --path . --rendering-driver opengl3 --audio-driver Dummy \
 #       --script res://tools/cloud/capture.gd -- --out=/abs/dir [--fixture] [--fresh] \
@@ -24,6 +28,8 @@ extends SceneTree
 const DEFAULT_OUT := "user://screenshots"
 # seconds to wait for a download + bake before giving up
 const PATIENCE := 1500.0
+# the office the world-map part places in Valencia (the spot of the real Valencia samples)
+const VALENCIA := {"city": "valencia", "lat": 39.473269, "lon": -0.387657}
 const SPOTS := [
 	{"city": "barcelona", "lat": 41.3925, "lon": 2.1640, "tag": "barcelona"},
 	{"city": "tokyo", "lat": 35.6595, "lon": 139.7005, "tag": "tokyo"},
@@ -59,6 +65,18 @@ func _init() -> void:
 	_app = load("res://main.tscn").instantiate()
 	root.add_child(_app)
 	await _frames(5)
+	# the game opens on the world map; its list button opens the plain city list
+	var world := _app.screen as WorldMap
+	if world == null:
+		_fail("the game did not open on the world map")
+		return
+	world.hover(Vector2(-100, -100))
+	await _shot("00_world_start")
+	world.click(WorldMap.LIST_BTN.get_center())
+	if not _app.screen is CityPick:
+		_fail("the world map's list button did not open the city list")
+		return
+	await _frames(2)
 	await _shot("01_cities")
 
 	var n := 2
@@ -133,6 +151,9 @@ func _init() -> void:
 	await _shot("%02d_server_busy" % n)
 	n += 1
 	if not await _traffic(n):
+		return
+	n += 1
+	if not await _world(n):
 		return
 	print("DONE %d shots -> %s" % [_shots, ProjectSettings.globalize_path(_out)])
 	for o in Store.offices():
@@ -355,6 +376,146 @@ func _wait_s(s: float) -> void:
 	var t0 := Time.get_ticks_msec()
 	while Time.get_ticks_msec() - t0 < s * 1000.0:
 		await process_frame
+
+
+# the world map: a fourth office placed from it in Valencia, the way back from that office to
+# the world, the whole world and Europe with the offices' pins, a pointed city, the list a city
+# with an office opens and its office row, Tokyo, a big group zoomed into, the city list and back,
+# and the 200 px window
+func _world(n: int) -> bool:
+	_app.show_world()
+	var world := _app.screen as WorldMap
+	world.set_level(0)
+	await _frames(2)
+	# Valencia is in the big European group at x1: a click zooms in on the group
+	world.click(world.spot_of("valencia"))
+	if world.level() == 0:
+		_fail("clicking a big group did not zoom in")
+		return false
+	if not Store.offices_in(VALENCIA["city"]).is_empty():
+		_fail("the world map's part places the Valencia office: leave Valencia out of --spot")
+		return false
+	world.set_level(WorldMap.STEP_MAX)
+	world.center_on(VALENCIA["lat"], VALENCIA["lon"])
+	if not await _open_from_world(world, "valencia"):
+		return false
+	var map := _app.screen as CityMap
+	map.set_zoom_step(1)
+	map.center_on(VALENCIA["lat"], VALENCIA["lon"])
+	_rich(3)
+	map.pick_latlon(VALENCIA["lat"], VALENCIA["lon"])
+	map.confirm()
+	if not await _wait_for("OfficeView"):
+		return false
+	var view := _app.screen as OfficeView
+	if not await _wait_drawn(view):
+		return false
+	view.hover(Vector2(-100, -100))
+	await _frames(2)
+	await _shot("%02d_world_office_valencia" % n)
+	n += 1
+	# back from the office: its city's map, then the world centred on the city
+	view.back()
+	if not _app.screen is CityMap:
+		_fail("back from the office did not open its city map")
+		return false
+	(_app.screen as CityMap).back()
+	world = _app.screen as WorldMap
+	if world == null:
+		_fail("back from the city map did not open the world map")
+		return false
+	world.hover(Vector2(-100, -100))
+	await _frames(2)
+	await _shot("%02d_world_back_valencia" % n)
+	n += 1
+	world.set_level(0)
+	await _frames(2)
+	await _shot("%02d_world" % n)
+	n += 1
+	world.set_level(WorldMap.STEP_MAX - 1)
+	world.center_on(48.0, 10.0)
+	await _frames(2)
+	await _shot("%02d_world_europe" % n)
+	n += 1
+	for id: String in ["barcelona", "valencia", "warszawa", "roma"]:
+		if world.spot_of(id) == Vector2.INF:
+			_fail("%s is not on screen in the Europe view" % id)
+			return false
+	world.hover(world.spot_of("roma"))
+	await _shot("%02d_world_hover" % n)
+	n += 1
+	# the last step: Barcelona and Valencia apart
+	world.set_level(WorldMap.STEP_MAX)
+	world.center_on(41.0, 0.5)
+	world.hover(world.spot_of("valencia"))
+	await _shot("%02d_world_spain" % n)
+	n += 1
+	# a city with an office opens the list; its office row opens the office itself
+	world.click(world.spot_of("barcelona"))
+	if not world.list_open():
+		_fail("clicking Barcelona's pin did not open the list")
+		return false
+	var row := -1
+	for k in world.list_rows().size():
+		if world.list_rows()[k]["kind"] == "office" \
+				and world.list_rows()[k]["city"]["id"] == "barcelona":
+			row = k
+	if row < 0:
+		_fail("the list has no row for Barcelona's office")
+		return false
+	world.show_row(row)
+	world.hover(world.row_rect(row).get_center())
+	await _shot("%02d_world_list" % n)
+	n += 1
+	world.click(world.row_rect(row).get_center())
+	if not await _wait_for("OfficeView"):
+		return false
+	if (_app.screen as OfficeView).office["city"] != "barcelona":
+		_fail("the office row opened another office")
+		return false
+	_app.show_world()
+	world = _app.screen as WorldMap
+	world.set_level(WorldMap.STEP_MAX - 1)
+	world.center_on(35.0, 135.0)
+	world.hover(world.spot_of("tokyo"))
+	await _shot("%02d_world_tokyo" % n)
+	n += 1
+	# the list button, and back
+	world.click(WorldMap.LIST_BTN.get_center())
+	if not _app.screen is CityPick or not (_app.screen as CityPick).back() \
+			or not _app.screen is WorldMap:
+		_fail("the city list did not go back to the world map")
+		return false
+	world = _app.screen as WorldMap
+	world.set_level(WorldMap.STEP_MAX - 1)
+	world.center_on(48.0, 10.0)
+	world.hover(Vector2(-100, -100))
+	var win := get_root()
+	var size := win.size
+	win.size = Vector2i(200, 200)
+	await _frames(4)
+	await _shot("%02d_world_200px" % n)
+	n += 1
+	win.size = size
+	await _frames(2)
+	if world.back():
+		_fail("Esc on the world map should quit, not stay")
+		return false
+	return true
+
+
+# clicks a city on the world map (opening its list first when it has offices or a group) and
+# waits for its city map, downloading it if need be
+func _open_from_world(world: WorldMap, city_id: String) -> bool:
+	world.click(world.spot_of(city_id))
+	if world.list_open():
+		for k in world.list_rows().size():
+			var r: Dictionary = world.list_rows()[k]
+			if r["kind"] == "city" and r["city"]["id"] == city_id:
+				world.show_row(k)
+				world.click(world.row_rect(k).get_center())
+				break
+	return await _wait_for("CityMap")
 
 
 # the first office again, close up (x3) on the car moving nearest the office
