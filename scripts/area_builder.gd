@@ -20,7 +20,8 @@ extends RefCounted
 # sheds in a yard. The building recipes are the mockup's (gen_battlegrounds.py build_tier,
 # office, roof_props, car_obj...). Every object remembers its lot, for the pick pass.
 # Street furniture (trees, lamps, cars, people) is placed from the blocks and roads with stable
-# hashes, so the same area always looks the same.
+# hashes, so the same area always looks the same. The office has no building: a gold pin on the
+# open ground by where it was placed marks it (OfficeMark finds the spot).
 
 const DISC_SIDES := 192
 const SLAB_DEPTH := 14.0
@@ -49,10 +50,8 @@ const SHED_FRONT := Vector2(18, 30)
 # garden and plaza trees: one per this many square metres
 const GARDEN_TREE := 70.0
 const PLAZA_TREE := 120.0
-# the office building's largest footprint (m), long x short side
-const OFFICE_SIZE := Vector2(17, 12)
-# the office stands on a site at most this much farther from the clicked point than the nearest
-const OFFICE_NEAR := 30.0
+# street trees, lamps and people keep this far (m) from the office's pin
+const MARK_CLEAR := 4.5
 
 var iso: Iso
 var radius := 0.0
@@ -83,8 +82,11 @@ var _for_sale: Array[Dictionary] = []
 # the lot being built (its objects remember it) and whether its buildings are faded, -1 = none
 var _lot_now := -1
 var _lot_fade := -1
-# screen boxes price tags and labels must keep clear of (the office's sign)
+# screen boxes price tags and labels must keep clear of (the office's pin)
 var keep_clear: Array[Rect2] = []
+# the office's marker: its ground point (metres) and the pin's box in the drawing
+var mark := Vector2.ZERO
+var mark_box := Rect2()
 # the layout in use; tools that compare the variants switch it
 static var skyline: int = SKYLINE_STYLE
 # street names painted on the asphalt (StreetNames.PAINTED), and where they lie
@@ -113,8 +115,7 @@ func build() -> void:
 	if names:
 		_paint_names()
 	_slab()
-	var office: String = _block.get("office_plot", "")
-	var has_office := false
+	mark = OfficeMark.at(_block)
 	var plots: Array = _block["plots"]
 	lot_ground.resize(plots.size())
 	lot_shadows.resize(plots.size())
@@ -125,11 +126,9 @@ func build() -> void:
 		lots.append({"data": plot, "poly": poly, "screen": iso.poly(poly),
 			"active": active <= 0.0 or c.length() <= active})
 		_lay_out(i)
-		has_office = has_office or plot["id"] == office
-	if not has_office:
-		_kiosk()
 	_trees()
 	_street_furniture()
+	_office_mark()
 	_cars()
 	if tags:
 		_tags()
@@ -146,10 +145,7 @@ func _lay_out(i: int) -> void:
 	lots[i].erase("roof")
 	_lot_now = i
 	_lot_fade = 0 if lots[i]["active"] else 1
-	if plot["id"] == _block.get("office_plot", ""):
-		_develop_office(plot, poly)
-	else:
-		_develop(plot, poly)
+	_develop(plot, poly)
 	_lot_now = -1
 	_lot_fade = -1
 
@@ -558,18 +554,10 @@ func _develop(plot: Dictionary, poly: PackedVector2Array) -> void:
 			_scatter(poly, id + "g", GARDEN_TREE * 1.6, built)
 		3:
 			_g_poly(poly, "GRASS")
-			var built := _apartments(plot, poly, owned, "")
+			var built := _apartments(plot, poly, owned)
 			_scatter(poly, id + "g", GARDEN_TREE, built)
 		_:
 			_scatter(poly, id + "p", PLAZA_TREE, _skyline(plot, poly, tier, levels, owned))
-
-
-# the player's office lot: apartment blocks round a courtyard (owned colours) and the modest
-# office building on a site near the clicked point
-func _develop_office(plot: Dictionary, poly: PackedVector2Array) -> void:
-	_g_poly(poly, "GRASS")
-	var built := _apartments(plot, poly, true, "office")
-	_scatter(poly, plot["id"] + "g", GARDEN_TREE, built)
 
 
 # --- building sites ------------------------------------------------------------------------------
@@ -684,33 +672,17 @@ func _crane(id: String, at: Vector2, top: float) -> void:
 
 
 # apartment blocks on the lot's street sites, each its own height and facade, so a lot reads
-# as a row of buildings; `office` puts the office on a site near (0, 0) instead
-func _apartments(plot: Dictionary, poly: PackedVector2Array, owned: bool,
-		office: String) -> Array[PackedVector2Array]:
+# as a row of buildings
+func _apartments(plot: Dictionary, poly: PackedVector2Array,
+		owned: bool) -> Array[PackedVector2Array]:
 	var levels := int(plot.get("levels", 5))
 	var sites := _sites(plot, poly, SITE_DEPTH[3], SITE_FRONT[3])
-	var mine := -1
-	if office != "":
-		# the office takes a site near the clicked point, the one nearest the viewer among them,
-		# so the lot's taller blocks do not hide it
-		var near := INF
-		for k in sites.size():
-			near = minf(near, Iso.centroid(sites[k]["poly"]).length())
-		var best := -INF
-		for k in sites.size():
-			var c := Iso.centroid(sites[k]["poly"])
-			if c.length() <= near + OFFICE_NEAR and Iso.depth(c) > best:
-				best = Iso.depth(c)
-				mine = k
 	var built: Array[PackedVector2Array] = []
 	for k in sites.size():
 		var site := Iso.clean(sites[k]["poly"])
 		var sid: String = sites[k]["id"]
 		_g_poly(site, "PAVE")
 		built.append(site)
-		if k == mine:
-			_office_at(plot["id"], site)
-			continue
 		var lv := levels + int(Iso.h01(sid + "lv") * 3.0) - 1
 		var hz := _apt_top(lv)
 		var roof := Pal.ramp_of("TEAL" if owned else "TER")
@@ -719,7 +691,7 @@ func _apartments(plot: Dictionary, poly: PackedVector2Array, owned: bool,
 		_roof_props(sid, site, hz, owned, false)
 		_close(hz)
 		tallest = maxf(tallest, hz + 16.0)
-	if owned and office == "":
+	if owned:
 		_roof(iso.pv(Iso.centroid(poly), _apt_top(levels + 1)))
 	return built
 
@@ -1113,39 +1085,28 @@ func _roof_props(id: String, g: PackedVector2Array, hz: float, owned: bool, mode
 		_pt.tex("flag:7:cyan", iso.pv(far, hz))
 
 
-# the player's office: a modest three-storey building on its site (capped in size, so it reads
-# as one office among ordinary blocks), a cyan shop front, a teal roof, a small REALTOR plate on
-# the roof and a flag
-func _office_at(id: String, poly: PackedVector2Array) -> void:
-	var inner := Iso.offset(poly, -1.5)
-	if inner.size() < 3:
-		inner = poly
-	var foot := Iso.min_rect(inner, 0.92)
-	if foot.size() >= 4:
-		foot = _cap_rect(foot, OFFICE_SIZE.x, OFFICE_SIZE.y)
-	else:
-		foot = inner
-	var hz := 7.0 + 5.0 * 2.0 + 2.0
-	_object(id, foot)
-	_pt.prism(foot, 0.0, hz, WorldShader.STYLE_OFFICE, Pal.ramp_of("STN"), Pal.ramp_of("TEAL"))
-	var c := Iso.centroid(foot)
-	var at := iso.pv(c, hz)
-	_pt.tex("plate", at)
-	var sign := Sprites.get_sprite("plate")
-	keep_clear.append(Rect2(at + sign[1], sign[2]).grow(4.0))
-	var left := foot[0]
-	for q in foot:
-		if q.x + q.y < left.x + left.y:
-			left = q
-	_pt.tex("flag:7:cyan", iso.pv(left + (c - left).normalized() * 1.0, hz))
-	_roof(iso.pv(c, hz + 14.0))
-	_close(hz)
-	tallest = maxf(tallest, hz + 16.0)
-
-
-# when the clicked spot has no plot near it, a small office stands on the pavement
-func _kiosk() -> void:
-	_office_at("kiosk", Iso.square(Vector2.ZERO, 5.0))
+# the office's marker, no building: a dashed gold ring painted on the ground (under everything
+# that stands) and a gold map pin with the city map's house in it, on open ground (OfficeMark)
+func _office_mark() -> void:
+	var steps := ceili(TAU * OfficeMark.RING * Iso.S * 2.0)
+	var seen := {}
+	for k in steps:
+		if k % 4 == 3:
+			continue
+		var a := TAU * k / steps
+		var q := iso.pi(mark.x + cos(a) * OfficeMark.RING, mark.y + sin(a) * OfficeMark.RING)
+		if seen.has(q):
+			continue
+		seen[q] = true
+		pre.append([Painter.OP_RECT, Rect2(q, Vector2.ONE), Pal.i("GOLD")])
+		pre.append([Painter.OP_RECT, Rect2(q + Vector2(0, 1), Vector2.ONE), Pal.i("GOLD_D")])
+	var at := iso.pv(mark)
+	_object("office_mark", Iso.square(mark, 0.5), true, false)
+	_pt.tex("office", at)
+	_close(0.0)
+	var sp := Sprites.get_sprite("office")
+	mark_box = Rect2(at + sp[1], sp[2])
+	keep_clear.append(mark_box.grow(4.0))
 
 
 # --- greenery and street life --------------------------------------------------------------------
@@ -1199,7 +1160,8 @@ func _scatter(poly: PackedVector2Array, seed: String, every: float,
 			break
 		var q := box.position + box.size * Vector2(Iso.h01(seed + "a%d" % k),
 			Iso.h01(seed + "b%d" % k))
-		if q.length() > radius - 3.0 or not Geometry2D.is_point_in_polygon(q, inner):
+		if q.length() > radius - 3.0 or not Geometry2D.is_point_in_polygon(q, inner) \
+				or q.distance_to(mark) < MARK_CLEAR:
 			continue
 		var clear := true
 		for j in keep_out.size():
@@ -1234,7 +1196,7 @@ func _along(poly: PackedVector2Array, out: float, every: float, start: float,
 			var q := a.lerp(b, d / length)
 			d += every
 			k += 1
-			if q.length() < radius - 3.0:
+			if q.length() < radius - 3.0 and q.distance_to(mark) >= MARK_CLEAR:
 				fn.call(q, k)
 
 

@@ -33,9 +33,10 @@ trabajas. Casi siempre está abierta pero nadie la mira. Por eso:
    al empezar, tarda (de 20 s a 3 h por nivel), se ve una obra con valla, andamios y grúa, y al
    acabar paga más. Puedes subir **varios niveles de golpe** ("HASTA TORRES": la suma del coste y
    del tiempo). Cada obra ocupa una **grúa**.
-4. **Subes la oficina**: el radio crece (150 → 225 → 300 → 400 → 500 m), aparecen más terrenos,
-   tu oficina paga más, más grúas y más horas sin conexión. En el **Nv 2** llega tu primer
-   **gerente, gratis**. En el **Nv 3** se abre el **constructor automático** (AUTO).
+4. **Subes la oficina** (en su pestaña): el radio crece (150 → 225 → 300 → 400 → 500 m),
+   aparecen más terrenos, suben sus **comisiones**, más grúas y más horas sin conexión. En el
+   **Nv 2** llega tu primer **gerente, gratis**. En el **Nv 3** se abre el **constructor
+   automático** (OBRAS SOLAS).
 5. Con una oficina en Nv 3 puedes **abrir otra** en otro sitio, que empieza su propia escalera.
 6. Más adelante: salir a bolsa, recalificaciones, eventos (punto 11).
 
@@ -65,7 +66,7 @@ trabajas. Casi siempre está abierta pero nadie la mira. Por eso:
 
 Un terreno ya construido cuesta su solar + sus obras x 1,25 (pagas por no esperar).
 
-| Oficina | Radio | Subir al siguiente | Alquiler de tu oficina | Grúas | Cobro sin conexión |
+| Oficina | Radio | Subir al siguiente | Comisiones de la oficina | Grúas | Cobro sin conexión |
 |---|---|---|---|---|---|
 | Nv 1 | 150 m | $60K | $2K/min | 1 | 12 h |
 | Nv 2 | 225 m | $15M | $12K/min | 2 | 14 h |
@@ -73,22 +74,41 @@ Un terreno ya construido cuesta su solar + sus obras x 1,25 (pagas por no espera
 | Nv 4 | 400 m | $250MM | $300K/min | 3 | 20 h |
 | Nv 5 | 500 m | – | $1,5M/min | 3 | 24 h |
 
-- Empiezas con **$50K** y tu terreno de la oficina (gratis).
+- Empiezas con **$35K** y el terreno donde pones la oficina, gratis, como **solar**: tu primera
+  obra puede ser ahí mismo. (Antes eran $50K y el terreno venía con bloques que no se podían
+  tocar; con el solar gratis se empieza un poco más rico, así que el dinero inicial baja.)
 - Segunda oficina $3MM, tercera $300MM, cuarta $10B (con una oficina en Nv 3).
 - Dinero en formato español: `$12.345`, `$123,4K`, `$1,23M`, `$45,6MM` (mil millones), `$7,1B`
   (billón = un millón de millones).
 
 ## 5. Tu oficina
 
-- Donde pones la oficina está **tu primer terreno**, gratis: **un edificio de oficinas modesto**
-  (tres plantas, escaparate cian, un cartelito REALTOR y una bandera), en una parcela de delante
-  cerca de donde pulsaste, y el resto del terreno son bloques de pisos normales con tejado
-  turquesa (tuyos). Ya no es un edificio enorme.
-- Ese terreno no se reconstruye: su alquiler sube con el nivel de la oficina.
-- Pulsar la oficina o la barra de abajo abre su ficha: nivel, radio (y el siguiente), grúas,
-  cobro sin conexión, gerente, **SUBIR A NV 2 · $60K** y el interruptor **AUTO** (desde Nv 3: con
-  una grúa libre empieza sola la obra que antes se paga, sin gastar más de la mitad del dinero,
-  también sin conexión).
+- **La oficina no es un edificio**: es tu negocio, y vive en una **pestaña** (pantalla completa,
+  como el banco). No ocupa sitio en el barrio, así que todo el suelo es para construir.
+- En el mapa solo queda **un punto**: una **chincheta dorada** con la casita del mapa de la
+  ciudad y un anillo dorado pintado en el suelo, en la acera o la esquina libre más cercana a
+  donde pulsaste (en el centro del anillo del radio). No estorba a ningún terreno. Al pasar el
+  ratón dice **TU OFICINA**; al pulsarla se abre la pestaña.
+- El terreno donde pusiste la oficina es **tuyo desde el principio, gratis, como solar**: un
+  terreno normal, con sus reglas (lo que cabe según tamaño y zona), que puedes llevar hasta
+  rascacielos.
+- La oficina gana sus propias **comisiones** por minuto, que suben con su nivel ($2K → $12K →
+  $60K → $300K → $1,5M); el gerente las sube igual que los alquileres. Son el antiguo "alquiler
+  de tu oficina".
+- **La pestaña de la oficina** (el **maletín** a la derecha, la barra de nivel de abajo, la
+  siguiente jugada "Sube la oficina" o la chincheta) tiene dos páginas:
+  - **OFICINA**: nivel y radio; lo que ganas (alquileres + comisiones); terrenos, obras y grúas
+    libres; horas de cobro sin conexión; **SUBIR A NV X** con lo que trae el siguiente nivel
+    (radio, comisiones, grúas, horas sin conexión, gerente gratis, obras solas, abrir otra
+    oficina) y lo que falta; el interruptor **OBRAS SOLAS** (desde Nv 3: con una grúa libre
+    empieza sola la obra que antes se paga, sin gastar más de la mitad del dinero, también sin
+    conexión); y filas grises **PRONTO** (salir a bolsa, recalificar) para lo que vendrá.
+  - **GERENTE**: el que manda, los candidatos de la agencia, OTROS y contratar (punto 7).
+- Un punto claro en el maletín avisa de que hay algo que hacer dentro (puedes subir de nivel, o
+  no tienes gerente y puedes contratar uno).
+- **Partidas de antes**: al cargar, el terreno de la oficina (que eran bloques fijos) pasa a ser
+  un solar tuyo; lo que ganabas no cambia (su alquiler era el de la oficina, que ahora son las
+  comisiones) y un aviso dice "El solar de tu oficina queda libre".
 
 ## 6. El banco
 
@@ -100,7 +120,7 @@ Para ir más rápido, nunca para hundirte. Reglas fijas de Oscar:
   |---|---|---|---|
   | Rápido | 1 % | 3 %/h | 30 min de alquiler |
   | Normal | 3 % | 1,2 %/h | 3 h de alquiler |
-  | Hipoteca | 5 % | 0,35 %/h | 15 h de alquiler, y no más del 50 % de lo que valen tus terrenos (tu oficina cuenta); la fila lo dice cuando eso es lo que la limita |
+  | Hipoteca | 5 % | 0,35 %/h | 15 h de alquiler, y no más del 50 % de lo que valen tus terrenos (el de tu oficina cuenta como cualquier otro); la fila lo dice cuando eso es lo que la limita |
 
 - **Nunca te ahoga**:
   - El interés se suma a la deuda; **nunca sale de tu caja**. Tu dinero solo puede subir.
@@ -126,7 +146,8 @@ Para ir más rápido, nunca para hundirte. Reglas fijas de Oscar:
 ## 7. Gerentes
 
 - Desde la **oficina Nv 2** cada oficina tiene **un gerente** (retrato pixel art y nombre:
-  "Lola Ferrer"). El primero llega **gratis** al subir a Nv 2 (común, +10 % alquiler).
+  "Lola Ferrer"), en la página **GERENTE** de la pestaña de la oficina. El primero llega
+  **gratis** al subir a Nv 2 (común, +10 % alquiler y comisiones).
 - **Agencia**: 3 candidatos por oficina; cada 6 h salen otros. "OTROS" los cambia ya, por 10 min
   de tu alquiler (el doble cada vez dentro de las mismas 6 h). Los candidatos se guardan: no
   cambian al subir de nivel ni moviendo el reloj.
@@ -159,16 +180,17 @@ Para ir más rápido, nunca para hundirte. Reglas fijas de Oscar:
 
 - **Oficina**: arriba izquierda volver + barrio y "N / M tuyos"; arriba derecha **dinero**,
   **+X/min** (menta) y la deuda (roja) si la hay. A la derecha: zoom + −, **banco** ($) y
-  **gerente** (su cara). Abajo: la **siguiente jugada** ("> COMPRA UN SOLAR EN CARRER D'ARAGÓ ·
+  **oficina** (maletín). Abajo: la **siguiente jugada** ("> COMPRA UN SOLAR EN CARRER D'ARAGÓ ·
   $30.903", o el tiempo que falta; tocarla te lleva) y la línea de la oficina: "NV 1 · GRÚAS 1/1"
-  y "NV 2: FALTAN $9.913 · ~5 MIN" o "¡SUBIR A NV 2!".
+  y "NV 2: FALTAN $9.913 · ~5 MIN" o "¡SUBIR A NV 2!"; tocarla abre la pestaña de la oficina.
 - **Mapa**: precio sobre los terrenos en venta (dorado si puedes pagarlo), flecha dorada donde
   puedes construir, barra y tiempo sobre cada obra, "+$" sobre tus tejados.
 - **Ficha de un terreno**: calle, zona, lo que hay, m², extras del sitio, alquiler (en un solar,
   lo que pagaría con casas); un botón grande (COMPRAR $X / CONSTRUIR CASAS · $X / EN OBRAS 3:20 /
   AL MÁXIMO) y otro al lado (HASTA TORRES / PRESTAR $X), con la razón en gris debajo (te faltan
   $X · ~4 min, sube la oficina para llegar, grúas ocupadas, tarda 2 min).
-- **Banco** y **Gerente**: pantallas completas con volver y título, como todas.
+- **Banco** y **Tu oficina** (con sus páginas OFICINA y GERENTE): pantallas completas con volver
+  y título, como todas.
 - Todo lo que se pulsa mide al menos 44 px de lienzo.
 
 ## 10. Lo que dice la simulación (Valencia, el Botànic; 130 terrenos)
@@ -179,24 +201,27 @@ Para ir más rápido, nunca para hundirte. Reglas fijas de Oscar:
 |---|---|---|---|
 | Primera compra | 0 s | 0 s | 0 s |
 | Primera obra acabada | 21 s | 21 s | 21 s |
-| Oficina Nv 2 + primer gerente | 5 min | 5 min | 5 min |
-| Primera Urbanización | 14 min | 2 h | 5 h |
-| Primer Bloque | 36 min | 3 h | 12 h |
-| Oficina Nv 3 | 1 h 11 min | 5 h | 1 d |
-| Primeras Torres | 3 h 22 min | 9 h | 1 d 12 h |
-| Primer Rascacielos | 16 h | 1 d | 1 d 21 h |
-| Oficina Nv 4 | 18 h | 2 d 6 h | 3 d 12 h |
-| Oficina Nv 5 | 6 d 7 h | 6 d | 7 d |
-| Todo el radio de 500 m tuyo | 6 d 13 h | 6 d 13 h | 9 d 12 h |
-| Todo al máximo | 10 d 21 h | 10 d 3 h | 10 d 14 h |
+| Oficina Nv 2 + primer gerente | 4 min | 4 min | 4 min |
+| Primera Urbanización | 11 min | 11 min | 11 min |
+| Primer Bloque | 39 min | 1 h 22 min | 5 h |
+| Oficina Nv 3 | 1 h 15 min | 4 h 10 min | 1 d |
+| Primeras Torres | 3 h 1 min | 6 h 47 min | 1 d 12 h |
+| Primer Rascacielos | 14 h 26 min | 22 h 32 min | 1 d 18 h |
+| Oficina Nv 4 | 22 h 24 min | 1 d 10 h | 2 d 12 h |
+| Oficina Nv 5 | 5 d 4 h | 5 d 5 h | 6 d |
+| Todo el radio de 500 m tuyo | 5 d 7 h | 6 d 2 h | 9 d |
+| Todo al máximo | 8 d 13 h | 8 d 13 h | 9 d 3 h |
 
-(Los dos que juegan poco juegan los 10 primeros minutos como el ideal.) Con préstamos usados con
-cabeza (pedir lo que falta para algo que se paga en menos de 2 h, pago automático 25 %): Nv 2 al
-momento, Nv 3 en 50 min; paga al banco $1,4M en total. Quien pide lo máximo el día 2 sin pagar,
-pierde el gerente y se va una semana: esa semana gana igualmente $60,4MM, su interés no pasa del
-6 % de su alquiler y paga al banco $6,1MM (unas 2 h de alquiler); llega al Nv 5 a la vez que el
-que se fue una semana sin préstamos. Después de ~11 días la oficina está completa: el siguiente
-objetivo es abrir otra (no simulado todavía).
+(Los dos que juegan poco juegan los 10 primeros minutos como el ideal.) Desde que la oficina no
+ocupa terreno (solar gratis, comisiones por nivel, $35K al empezar) la tabla apenas se mueve: el
+Nv 2 llega en 4 min en vez de 6 y lo demás queda a menos de un 10 % de antes (en la zona de
+prueba, Nv 2 en 5 min en vez de 7). Con préstamos usados con cabeza (pedir lo que falta para
+algo que se paga en menos de 2 h, pago automático 25 %): Nv 2 en 5 min, Nv 3 en 56 min; paga al
+banco $1,3M en total. Quien pide lo máximo el día 2 sin pagar, pierde el gerente y se va una
+semana: esa semana gana igualmente $74,5MM, su interés no pasa del 6 % de su alquiler y paga al
+banco $5,9MM (unas 2 h de alquiler); llega al Nv 5 a la vez que el que se fue una semana sin
+préstamos. Después de ~9 días la oficina está completa: el siguiente objetivo es abrir otra (no
+simulado todavía).
 
 ## 11. Más adelante (no está hecho)
 

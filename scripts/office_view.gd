@@ -10,8 +10,10 @@ extends Screen
 # cyan, grey when it is outside the office's radius); clicking it selects it (gold) and opens a
 # card with its street, zone, size, tier and asking price; Esc or the card's X closes the card.
 # A saved v2 area (small plots) is re-parcelled into lots when it is opened, and saved back.
-# The game itself (money, cards with buy / build buttons, markers, the bank and the manager) is
-# OfficePlay, a layer drawn over this one that gets every input first; the lots are drawn as the
+# The office has no building: a gold pin marks where it was placed; pointing at it names it and
+# clicking it opens the office tab. The game itself (money, cards with buy / build buttons,
+# markers, the bank and the office tab) is OfficePlay, a layer drawn over this one that gets
+# every input first; the lots are drawn as the
 # game has them (Game.apply) and one lot is redrawn when it changes (BlockView.redraw_lot).
 # Traffic drives cars over the drawing, as a child of its sprite; it hides them behind whatever
 # the drawing's depth pass holds, which lot redraws keep up to date, and follows a level-up.
@@ -57,7 +59,6 @@ var _pan := Vector2.ZERO
 var _stats: Dictionary = {}
 var _street_spots: Array[Dictionary] = []
 var _lot_count := 0
-var _office_lot := ""
 var _block: Dictionary = {}
 var _play: OfficePlay
 # the drawing being made after a level-up, shown once it is ready, and the lots that changed
@@ -113,13 +114,15 @@ func setup(meta: Dictionary) -> bool:
 	if not _view.set_block(block):
 		return false
 	_stats = block.get("stats", {})
-	_office_lot = block.get("office_plot", "")
 	_lot_count = block["plots"].size()
 	_street_spots = _view.street_labels()
 	for run: Array in StreetNames.runs(block):
 		_runs_px.append([StreetNames.short(run[0]), _view.project(run[1]), _view.project(run[2])])
 	_play = OfficePlay.new()
 	_play.setup(self, game, id, block)
+	# the office's free lot learns its multipliers from the area (a new office, an old save)
+	if game.fill_lots(id, _play.infos):
+		game.save()
 	_traffic = Traffic.new()
 	_traffic.setup(block, _view.focus, meta["id"])
 	return true
@@ -144,7 +147,7 @@ func _ready() -> void:
 	_set_zoom(_zoom_i)
 
 
-# a full-window panel (bank, manager) hides the map: the cars wait under it and drive on when
+# a full-window panel (bank, office tab) hides the map: the cars wait under it and drive on when
 # it closes
 func _process(_delta: float) -> void:
 	var hidden := _play.panel_kind() != ""
@@ -228,6 +231,24 @@ func lot_under(at: Vector2) -> int:
 	if at.x > MAP_RIGHT and at.y < BUTTONS_BOTTOM:
 		return -1
 	return _view.lot_at((at - _pan) / _zoom())
+
+
+# true when a canvas point is on the office's pin, or close enough round it to be easy to hit at
+# any zoom, but not on something standing in front of it
+func on_mark(at: Vector2) -> bool:
+	if not is_drawn() or at.y < MAP_TOP or at.y > MAP_BOTTOM:
+		return false
+	if at.x > MAP_RIGHT and at.y < BUTTONS_BOTTOM:
+		return false
+	var box := _view.mark_box
+	var grow := maxf(0.0, (Ui.MIN_HIT / _zoom() - minf(box.size.x, box.size.y)) * 0.5)
+	return _view.points_at_mark((at - _pan) / _zoom(), grow)
+
+
+# the top middle of the office's pin on the canvas
+func mark_on_screen() -> Vector2:
+	var box := _view.mark_box
+	return _pan + Vector2(box.get_center().x, box.position.y) * _zoom()
 
 
 # selects a lot (-1 clears); a lot hidden under the card is slid up into view
@@ -361,7 +382,7 @@ func drag(_at: Vector2, rel: Vector2) -> void:
 func hover(at: Vector2) -> void:
 	hot = at
 	_play.hover(at)
-	_hover = -1 if _play.blocks_map() else lot_under(at)
+	_hover = -1 if _play.blocks_map() or on_mark(at) else lot_under(at)
 	if labels != StreetNames.MICRO:
 		_street_under(at)
 	_over.queue_redraw()

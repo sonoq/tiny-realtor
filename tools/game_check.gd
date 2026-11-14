@@ -4,8 +4,10 @@ extends SceneTree
 # buy, build (one tier and several), wait, rent, level up (and the free first manager), the
 # office's builder (also offline), save and reload, time away (capped), a clock moved back and
 # forth, a broken save, the bank (limits, fee, interest never above the rent's cap, money never
-# going down, debt shrinking with autopay, a max loan then lost income then a week away) and the
-# managers (stable candidates, prices, hiring). Uses the made-up fixture area (no network).
+# going down, debt shrinking with autopay, a max loan then lost income then a week away), the
+# managers (stable candidates, prices, hiring) and the office with no building (its free lot is
+# an ordinary one, its own income by level) including a v1 save from before, migrated on load.
+# Uses the made-up fixture area (no network).
 #
 #   godot --headless --path . --script res://tools/game_check.gd
 #
@@ -34,6 +36,8 @@ func _init() -> void:
 	_bank_adversarial()
 	_managers()
 	_builder()
+	_office_lot()
+	_migration()
 	_broken_save()
 	_format()
 	for p in [SAVE, SAVE + ".bak", SAVE + ".tmp"]:
@@ -58,7 +62,7 @@ func _new_game() -> Game:
 	_mono = 1000.0
 	var g := _game()
 	g.fresh(g.now())
-	g.add_office(OFFICE, _block["office_plot"])
+	g.add_office(OFFICE, _block["office_plot"], _infos)
 	return g
 
 
@@ -103,7 +107,7 @@ func _loop() -> void:
 	var g := _new_game()
 	_check(g.money() == Economy.START_MONEY, "starts with START_MONEY")
 	_check(g.owns(OFFICE, _block["office_plot"]), "the office lot is owned from the start")
-	_check(g.income() == Economy.office_rent(1), "the office pays its rent from the start")
+	_check(g.income() == Economy.office_income(1), "the office's own income from the start")
 	var solar := _solar(g)
 	_check(not solar.is_empty(), "a solar inside the first radius (START_SOLARES)")
 	if solar.is_empty():
@@ -132,7 +136,7 @@ func _loop() -> void:
 	var done := _play(g, Economy.BUILD_TIME[1] + 1.0)
 	_check(done.size() == 1 and int(g.lot(OFFICE, lid)["t"]) == 1, "the works finish on time")
 	_check(g.cranes_busy(OFFICE) == 0, "the crane is free again")
-	var expect := Economy.office_rent(1) + Economy.rent(1, solar)
+	var expect := Economy.office_income(1) + Economy.rent(1, solar)
 	_check(_near(g.income(), expect), "rent goes up when the works finish")
 	_check(g.money() > before, "rent comes in while playing")
 	before = g.money()
@@ -392,6 +396,110 @@ func _builder() -> void:
 		"the builder keeps building while away")
 	h.set_auto(OFFICE, false)
 	_check(h.auto_build(OFFICE).is_empty(), "the builder can be switched off")
+
+
+# the office has no building: the lot it was placed on is an ordinary solar of the player's,
+# built like any other, and the office earns its own income by level
+func _office_lot() -> void:
+	var g := _new_game()
+	var lid: String = _block["office_plot"]
+	var info: Dictionary = _infos[_infos.map(func(i: Dictionary) -> String: return i["id"]).find(
+		lid)]
+	var l := g.lot(OFFICE, lid)
+	_check(int(l["t"]) == Economy.OFFICE_LOT_TIER and not l.has("fill") and not l.has("office"),
+		"the office lot starts as an ordinary lot at OFFICE_LOT_TIER")
+	_check(_near(float(l["k"]), float(info["rent_k"]), 1e-6) and int(l["mx"]) == int(
+		info["max_tier"]), "the office lot has the area's multipliers and max tier")
+	_check(_near(g.office_income(OFFICE), Economy.office_income(1), 1e-9) and _near(
+		g.lots_rent(OFFICE), 0.0), "a solar pays nothing; the office's own income does")
+	_check(g.can_build(OFFICE, lid) == "", "the office lot can be built on")
+	var bm := g.best_move(OFFICE, _infos)
+	_check(bm.get("kind") == "build" and bm.get("lot") == lid or bm.get("kind") == "buy",
+		"the first move is to build on the office lot or buy: %s" % bm.get("kind"))
+	_check(g.build(OFFICE, lid) == "", "build Casas on the office lot")
+	_play(g, Economy.BUILD_TIME[1] + 1.0)
+	_check(int(g.lot(OFFICE, lid)["t"]) == 1, "the office lot's works finish")
+	_check(_near(g.income(), Economy.office_income(1) + Economy.rent(1, info)),
+		"the office lot pays rent like any lot, plus the office's income")
+	# all the way up: the office lot may hold the tallest tier its size allows
+	g.state["money"] = 1e15
+	g.state["offices"][OFFICE]["level"] = Economy.max_level()
+	_check(g.build(OFFICE, lid, int(info["max_tier"])) == "" or int(info["max_tier"]) <= 1,
+		"the office lot builds up to its max tier")
+	_play(g, 5.0 * 3600.0)
+	_check(int(g.lot(OFFICE, lid)["t"]) == int(info["max_tier"]), "the office lot reaches %d"
+		% int(info["max_tier"]))
+	# the office's income grows with its level, the manager's rent bonus counts on it
+	for lv in range(1, Economy.max_level() + 1):
+		g.state["offices"][OFFICE]["level"] = lv
+		_check(_near(g.office_income(OFFICE), Economy.office_income(lv), 1e-9),
+			"office income at Nv %d" % lv)
+	g.state["offices"][OFFICE]["manager"] = {"name": "T", "face": 1, "rarity": 0,
+		"traits": [{"k": "rent", "v": 0.10}], "level": 2}
+	_check(_near(g.office_income(OFFICE), Economy.office_income(Economy.max_level()) * 1.1,
+		1e-9), "the manager's rent bonus counts on the office's income")
+	# an office whose lot is not known yet pays nothing for it and builds nothing on it
+	var h := _game()
+	h.fresh(h.now())
+	h.add_office("pending", lid)
+	_check(h.lot("pending", lid).get("fill", false), "without the area the lot waits to be filled")
+	h.state["money"] = 1e9
+	_check(h.can_build("pending", lid) != "" and h.lots_rent("pending") == 0.0,
+		"a lot waiting to be filled cannot be built and pays nothing")
+	h.state["offices"]["pending"]["level"] = Economy.AUTO_LEVEL
+	h.set_auto("pending", true)
+	_check(h.auto_build("pending").is_empty(), "the builder leaves a lot waiting to be filled")
+	_check(h.fill_lots("pending", _infos) and not h.lot("pending", lid).has("fill"),
+		"fill_lots fills it from the area")
+	_check(not h.fill_lots("pending", _infos), "filling twice changes nothing")
+
+
+# a v1 save (the office stood on its lot: tier 3, the office's rent, never rebuilt) loads into
+# the new model: the same income, the lot an ordinary solar to build on
+func _migration() -> void:
+	var lid: String = _block["office_plot"]
+	var solar := {}
+	for info in _infos:
+		if info["id"] != lid and int(info["base_tier"]) == 0:
+			solar = info
+			break
+	var mgr := {"name": "Lola Ferrer", "face": 7, "rarity": 0, "traits": [{"k": "rent",
+		"v": 0.10}], "level": 2}
+	Store.write_json(SAVE, {"format": Game.FORMAT, "version": 1, "money": 123456.0, "seen": _t,
+		"created": _t - 3600.0, "last_office": OFFICE, "autopay": 0.10, "loans": {},
+		"stats": {"earned": 0.0, "interest": 0.0, "fees": 0.0, "repaid": 0.0, "built": 3,
+			"bought": 1},
+		"offices": {OFFICE: {"level": 2, "office_lot": lid, "works": 2, "auto": false,
+			"manager": mgr, "pool": {"n": 0, "at": _t},
+			"lots": {lid: {"t": 3, "k": 0.0, "pk": 1.0, "mx": 3, "office": true},
+				solar["id"]: {"t": 2, "k": float(solar["rent_k"]), "pk": float(solar["price_k"]),
+				"mx": int(solar["max_tier"])}}}}})
+	# what a v1 game paid: the office lot paid the office's rent (now its own income)
+	var v1_income := (Economy.office_income(2) + Economy.RENT[2] * float(solar["rent_k"])) * 1.1
+	var g := _game()
+	g.load_or_new()
+	var l := g.lot(OFFICE, lid)
+	_check(int(g.state["version"]) == Game.VERSION, "a v1 save is brought to the current version")
+	_check(not l.has("office") and int(l["t"]) == Economy.OFFICE_LOT_TIER,
+		"the v1 office lot becomes an ordinary solar")
+	_check(_near(g.income(), v1_income, 1e-9), "a migrated save earns what it earned: %s vs %s"
+		% [g.income(), v1_income])
+	_check(_near(g.money(), 123456.0, 1e-9) and g.level(OFFICE) == 2 and g.manager(OFFICE)
+		is Dictionary and int(g.lot(OFFICE, solar["id"])["t"]) == 2,
+		"money, level, manager and the other lots survive the migration")
+	_check(g.news.size() == 1 and g.news[0].contains("solar"), "the player is told the lot is free")
+	_check(g.can_build(OFFICE, lid) != "", "before the area is seen the lot waits")
+	g.fill_lots(OFFICE, _infos)
+	g.state["money"] = 1e9
+	_check(g.can_build(OFFICE, lid) == "", "once the office opens the old office lot builds")
+	g.save()
+	var h := _game()
+	h.load_or_new()
+	var k := h.lot(OFFICE, lid)
+	_check(not k.has("office") and not k.has("fill") and int(k["mx"]) >= 1 and h.news.is_empty(),
+		"the migrated save reloads as it is, without migrating twice")
+	for p in [SAVE + ".bak", SAVE + ".tmp"]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 
 
 func _broken_save() -> void:

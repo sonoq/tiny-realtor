@@ -5,7 +5,8 @@ extends RefCounted
 # the world shader reads raw (a canvas item's own TEXTURE is colour-converted on some renderers,
 # which would knock the pixels off the palette); the shader fades them or turns them to ink.
 # Recipes are the mockup's: trees, flags, the red "$" sale sign, street lamps, people, and the
-# framed tags (price tags, the REALTOR billboard) with the 3x5 micro font.
+# framed price tags with the 3x5 micro font; plus the office's marker, a gold map pin with the
+# city map's house in it.
 # A sprite is placed by its anchor: the pixel its recipe calls (0, 0), usually the foot.
 
 const MICRO := {
@@ -100,12 +101,8 @@ static func get_sprite(key: String) -> Array:
 			_ped(px, int(parts[1]))
 		"tag":
 			_tag(px, parts[1])
-		"billboard":
-			_billboard(px)
-		"plate":
-			_plate(px)
-		"pin":
-			_pin(px)
+		"office":
+			_office(px)
 	var out := _bake(px)
 	_cache[key] = out
 	return out
@@ -248,44 +245,25 @@ static func _tag(px: Dictionary, text: String) -> void:
 	_put(px, 0, -13, "GOLD_M")
 
 
-# the office's rooftop sign: a Battlegrounds panel on two legs, anchored at the roof's middle
-static func _billboard(px: Dictionary) -> void:
-	var bw := 43
-	var bh := 13
-	var bx0 := -bw / 2
-	var by0 := -bh - 7
-	for lx: int in [bx0 + 5, bx0 + bw - 6]:
-		for k in 8:
-			_put(px, lx, by0 + bh + k - 1, "SL1")
-	frame(px, bx0, by0, bx0 + bw, by0 + bh, Pal.i("GOLD"), Pal.i("SL1"))
-	var icon: Array[String] = ["..1..", ".111.", "11111", ".1.1.", ".111."]
-	for j in icon.size():
-		for i in 5:
-			if icon[j][i] == "1":
-				_put(px, bx0 + 4 + i, by0 + 4 + j, "CYAN")
-	micro(px, bx0 + 11, by0 + 4, "REALTOR", Pal.i("GOLD"))
-
-
-# the office's small rooftop plate: REALTOR in gold on a dark frame, on two short legs, anchored
-# at the roof's middle (much smaller than the mockup's billboard, so the office stays modest)
-static func _plate(px: Dictionary) -> void:
-	var w := micro_w("REALTOR") + 6
-	var x0 := -w / 2
-	frame(px, x0, -13, x0 + w, -4, Pal.i("GOLD"), Pal.i("SL1"))
-	micro(px, x0 + 3, -11, "REALTOR", Pal.i("GOLD"))
-	for lx: int in [x0 + 4, x0 + w - 4]:
-		for k in 3:
-			_put(px, lx, -3 + k, "SL1")
-
-
-# a gold arrow floating over the office, so it is found at a glance even zoomed out
-static func _pin(px: Dictionary) -> void:
-	var rows: Array[String] = [".1111111.", "122222221", ".1222221.", "..12221..", "...121...",
-		"....1...."]
+# the office's marker: a gold map pin standing on its tip (the anchor), lit from the upper
+# left, with the city map's office house cut in its head in dark slate
+static func _office(px: Dictionary) -> void:
+	var rows: Array[String] = [
+		"...lgggm...",
+		"..lgggggm..",
+		".lgggHgggm.",
+		"lgggHHHgggm",
+		"lggHHHHHggm",
+		"lgggHHHgggm",
+		"lgggHgHgggm",
+		".ggggggggm.",
+		"..ggggggm..",
+		"...ggggm...",
+		"....ggm....",
+		".....m.....",
+	]
+	var tone := {"l": "CREAM", "g": "GOLD", "m": "GOLD_M", "H": "SL1"}
 	for j in rows.size():
 		for i in rows[j].length():
-			var ch := rows[j][i]
-			if ch == "1":
-				_put(px, i - 4, j - 6, "GOLD_D")
-			elif ch == "2":
-				_put(px, i - 4, j - 6, "GOLD")
+			if tone.has(rows[j][i]):
+				_put(px, i - 5, j - rows.size() + 1, tone[rows[j][i]])

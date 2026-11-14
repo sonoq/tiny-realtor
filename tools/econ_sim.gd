@@ -93,7 +93,7 @@ func _play(who: String, span: float) -> void:
 	var g := Game.new("")
 	g.clock = func() -> float: return _t
 	g.fresh(_t)
-	g.add_office("sim", _office_lot)
+	g.add_office("sim", _office_lot, _infos)
 	var miles := {}
 	var snaps: Array = []
 	var next_snap := 0
@@ -300,9 +300,8 @@ func _avg_tier(g: Game) -> float:
 	var n := 0
 	for lid: String in g.office("sim")["lots"]:
 		var l: Dictionary = g.office("sim")["lots"][lid]
-		if not l.get("office", false):
-			sum += int(l["t"])
-			n += 1
+		sum += int(l["t"])
+		n += 1
 	return sum / maxf(1.0, n)
 
 
@@ -310,9 +309,7 @@ func _milestones(g: Game, miles: Dictionary, age: float) -> void:
 	var lots: Dictionary = g.office("sim")["lots"]
 	var top := 0
 	for lid: String in lots:
-		var l: Dictionary = lots[lid]
-		if not l.get("office", false):
-			top = maxi(top, int(l["t"]))
+		top = maxi(top, int(lots[lid]["t"]))
 	_mark(miles, "1a compra", age, lots.size() > 1)
 	_mark(miles, "1a obra acabada", age, int(g.state["stats"].get("built", 0)) > 0)
 	for t in range(2, 6):
@@ -329,7 +326,7 @@ func _milestones(g: Game, miles: Dictionary, age: float) -> void:
 			if g.owns("sim", info["id"]):
 				mine += 1
 				var l := g.lot("sim", info["id"])
-				if l.get("office", false) or int(l["t"]) >= int(l["mx"]):
+				if int(l["t"]) >= int(l["mx"]):
 					maxed += 1
 	_mark(miles, "radio 500 m todo tuyo", age, g.level("sim") >= Economy.max_level() \
 		and mine >= inside)

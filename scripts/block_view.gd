@@ -49,8 +49,10 @@ var active_radius := 0.0
 var texture: Texture2D
 # drawing positions over the roofs the player owns, for income pops
 var pops: Array[Vector2] = []
-# the office's REALTOR sign in the drawing, which labels keep clear of
+# the office's pin in the drawing (with a margin), which labels keep clear of
 var sign_box := Rect2()
+# the office's pin in the drawing
+var mark_box := Rect2()
 # the lots as AreaBuilder laid them out ("data", "poly", "screen", "box", "active")
 var lots: Array[Dictionary] = []
 # the pick pass: which lot each pixel of the drawing shows, null until `drawn`
@@ -83,6 +85,8 @@ var _image: Image
 var _depth_img: Image
 var _shade_img: Image
 var _queue: Array[int] = []
+# the depth code of the office's pin
+var _mark_code := 0
 # boxes of the ground, shadow and pre ops (built on the first lot redraw)
 var _boxes := {}
 # lot -> its outline as runs of drawing pixels: [next to it, one further out]
@@ -129,6 +133,8 @@ func set_block(block: Dictionary) -> bool:
 	lots = _area.lots
 	if not _area.keep_clear.is_empty():
 		sign_box = _area.keep_clear[0]
+	mark_box = _area.mark_box
+	_mark_code = depth_code(Iso.depth(_area.mark))
 	build_ms = Time.get_ticks_msec() - t0
 	return true
 
@@ -358,6 +364,20 @@ func lot_at(px: Vector2) -> int:
 		return -1
 	var k := (y * pick.get_width() + x) * 4
 	return (_pick_bytes[k] | (_pick_bytes[k + 1] << 8)) - 1
+
+
+# true when a drawing pixel within `grow` of the office's pin shows the pin or something behind
+# it (bare ground, a building farther back), not something standing in front of it
+func points_at_mark(px: Vector2, grow: float) -> bool:
+	if mark_box.size == Vector2.ZERO or not mark_box.grow(grow).has_point(px):
+		return false
+	if _depth_img == null:
+		return true
+	var q := Vector2i(px.floor())
+	if q.x < 0 or q.y < 0 or q.x >= _depth_img.get_width() or q.y >= _depth_img.get_height():
+		return false
+	var c := _depth_img.get_pixelv(q)
+	return (c.r8 | (c.g8 << 8)) <= _mark_code
 
 
 # the outline of everything a lot shows (its ground and buildings, where nothing stands in

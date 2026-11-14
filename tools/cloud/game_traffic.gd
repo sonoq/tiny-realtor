@@ -40,7 +40,7 @@ func _init() -> void:
 	# and one empty lot kept for the hiding check
 	var g := Game.new(Game.save_path())
 	g.fresh(g.now())
-	g.add_office(id, block.get("office_plot", ""))
+	g.add_office(id, block.get("office_plot", ""), infos)
 	g.state["offices"][id]["level"] = Economy.max_level()
 	g.state["money"] = 1e15
 	var order: Array[int] = []
@@ -52,8 +52,7 @@ func _init() -> void:
 	var spare := -1
 	for i in order:
 		var info: Dictionary = infos[i]
-		if info["id"] == block.get("office_plot", ""):
-			continue
+		# the office's own lot is owned already: it grows like the rest
 		g.buy(id, info)
 		var l := g.lot(id, info["id"])
 		if l.is_empty():

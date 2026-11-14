@@ -13,9 +13,11 @@ made by the game, drawn as procedural isometric pixel art made with maths.
 - **Current state: first gameplay loop.** Pick a city, see its real map, place offices
   (download and bake each office's area once from OpenStreetMap), and play in the office view:
   rent per minute (offline too, capped), buy lots in the office's radius, build tiers (works with
-  scaffolding and cranes), level the office up (bigger radius), the bank (three loans that can
-  never choke you, autopay) and one manager per office (pixel portraits, rarity, bonuses). The
-  game is saved under `user://`. The design and every number: `docs/GAMEPLAY.md` (Spanish),
+  scaffolding and cranes), the office tab (the office is a business, not a building: level up
+  for a bigger radius and more commissions, the builder switch, one manager per office with
+  pixel portraits, rarity and bonuses, greyed PRONTO rows; on the map only a gold pin marks it)
+  and the bank (three loans that can never choke you, autopay). The game is saved under
+  `user://`. The design and every number: `docs/GAMEPLAY.md` (Spanish),
   `scripts/economy.gd`, `tools/econ_sim.gd`.
 - **Visual style: A, "sibling of Tiny Battlegrounds" (decided by Oscar).** The spec is the
   mockup in `docs/style_mockups/a_battlegrounds/` (`gen_battlegrounds.py` + its PNGs); the other
@@ -87,46 +89,62 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   Lots are pointed at through BlockView's pick image (`lot_under`): hover = a cyan outline of
   everything the lot shows (grey when outside the active radius, still selectable), click =
   `select` (gold outline, slid up out from under the card; `focus_lot` pans one into view).
-  Before drawing it writes the game's lots into the area (`Game.apply`); `redraw_lot(i)` redraws
-  one lot, `relevel(radius)` draws the whole area again off screen after a level-up and swaps it
-  in. Every input goes to its `OfficePlay` first. Esc / back closes a panel, then the card, then
+  Before drawing it writes the game's lots into the area (`Game.apply`) and lets the game fill
+  in its free office lot's multipliers (`Game.fill_lots`); `redraw_lot(i)` redraws one lot,
+  `relevel(radius)` draws the whole area again off screen after a level-up and swaps it in. The
+  office's pin: `on_mark(at)` (the pin or the ground round it, at least `MIN_HIT` at any zoom,
+  never a building in front of it; hovering it outlines no lot) and `mark_on_screen()`. Every
+  input goes to its `OfficePlay` first. Esc / back closes a panel, then the card, then
   leaves. A saved v2 area is upgraded to v3 on open (`BlockBaker.upgrade`) and written back.
 - `office_play.gd` (`OfficePlay`) - the game layer drawn over the map (a child node of
   OfficeView, so the map code and the game code stay apart): money + rent/min (+ debt) top
-  right; under the zoom the bank button and the manager button (the manager's face); on the map
-  price tags (gold = affordable) over lots for sale in the radius, gold arrows over lots that can
-  be built on now, a bar + time over each works, "+$amount" pops over owned roofs only while the
-  pointer is over the window; at the bottom the next move (`Game.best_move`; tap = pan to it and
-  open its card) and the level line (level, free cranes, "Nv 2: faltan $X · ~5 min" or "¡Subir!",
-  money/cost bar; tap = the office card). The lot card buys, builds the next tier or several at
-  once ("Hasta Torres $X"), or borrows what is missing and does it in one tap ("Pedir $X", the
-  note says what you will owe); the office card levels up and switches the office's builder on
-  ("Obras solas", Nv 3). Buy / build can be undone for 6 s (the whole state comes back, a loan
+  right; under the zoom the bank button and the office button (a gold briefcase, a dot when a
+  level-up is affordable or a manager could be hired); on the map price tags (gold = affordable)
+  over lots for sale in the radius, gold arrows over lots that can be built on now, a bar + time
+  over each works, "+$amount" pops over owned roofs only while the pointer is over the window,
+  "TU OFICINA" over the office's pin while pointed at (a click on it opens the office tab); at
+  the bottom the next move (`Game.best_move`; tap = pan to it and open its card, or the office
+  tab for a level-up / a hire) and the level line (level, free cranes, "Nv 2: faltan $X · ~5
+  min" or "¡Subir!", money/cost bar; tap = the office tab). The lot card buys, builds the next
+  tier or several at once ("Hasta Torres $X"), or borrows what is missing and does it in one tap
+  ("Pedir $X", the note says what you will owe); the office's own lot has an ordinary card. A
+  level-up in the tab redraws the area for the new radius (`_leveled`). Buy / build can be undone for 6 s (the whole state comes back, a loan
   taken for it too; opening a panel or another action ends the undo). Guards for a window that
   is always on top: the card's buttons keep their action while the pointer is on them, a click
   right after the window got the focus (`App.focus_ms`) or the second tap of a double tap does
-  not spend, the welcome card ignores taps for 0.7 s, a drag that starts on the UI does not pan.
+  not spend (nor does it in the office tab), the welcome card ignores taps for 0.7 s, a drag that starts on the UI does not pan.
   Before an action the game is brought up to date (`OfficeView.sync`). Toasts (important ones
   queue). The welcome-back card ("Mientras no estabas: +$X"). Holds the panel:
-- `bank_panel.gd` (`BankPanel`), `team_panel.gd` (`TeamPanel`) - full-window panels over the
+- `bank_panel.gd` (`BankPanel`), `office_panel.gd` (`OfficePanel`) - full-window panels over the
   office with the back button and title: the bank (debt, interest/min next to rent/min, autopay
   NO/10/25/50 % with the payoff time, three loans with Pedir / Devolver; Pedir opens a sheet that
   shows amount, debt, interest vs rent and the payoff at each autopay before Firmar) and the
-  manager (the one in charge, the agency's three candidates, reroll, hire with a second tap).
+  office tab "Tu oficina", two pages under the header (`TABS`): OFICINA (level, radius, income
+  = lots' rent + commissions, lots / works / free cranes, offline hours; the next level with
+  its cost, what it brings and `LEVEL_BTN`; the "Obras solas" switch, greyed until Nv 3; greyed
+  PRONTO rows `SOON` for later features) and GERENTE, which is `team_panel.gd` (`TeamPanel`,
+  drawn inside the tab: the one in charge, the agency's three candidates, reroll, hire with a
+  second tap). `OfficePlay.open_panel("office" | "team" | "bank")`.
 - `faces.gd` (`Faces`) - manager portraits: 16x16 pixel busts from a seed (skin, hair style and
   colour, eyes, glasses, moustache, suit and tie or blouse), palette colours with an ink rim,
   drawn at whole multiples; `badge` frames one in its rarity's colour.
 
 **Data and rules**
 - `economy.gd` (`Economy`) - every number of the game (tiers: build cost, time, rent; land;
-  pre-built markup; plusvalía and works inflation; office levels: cost, office rent, cranes,
-  offline hours; later offices; the three loans and the bank's caps; managers: hire prices,
+  pre-built markup; plusvalía and works inflation; office levels: cost, the office's own
+  income `OFFICE_INCOME` (commissions), cranes, offline hours; `OFFICE_LOT_TIER` (the free lot
+  starts a solar); later offices; the three loans and the bank's caps; managers: hire prices,
   pool odds, traits) and what a lot is worth from real data (`lot_infos`: area factor, location
   bonuses park / avenue / water / commercial / rails, max tier by zone and size, distance).
   `money()` ("$12.345", "$1,23M", "$45,6MM" = mil millones, "$7,1B" = billón) and `duration()`.
 - `game.gd` (`Game`) - the player's game, plain data with an injectable clock (`clock`, `mono`):
   money, the bank, and per office its level, lots (tier, rent and price multipliers, max tier,
-  works), works count, builder switch, manager and candidate pool. Rules: `buy`, `build` (one
+  works), works count, builder switch, manager and candidate pool. Income = each office's own
+  `office_income` (commissions by level) + its `lots_rent`, both with the manager's rent bonus.
+  `add_office` owns the lot the office was placed on, free, as an ordinary lot at
+  `OFFICE_LOT_TIER`; until `fill_lots` has seen the area it is `fill` (pays nothing, takes no
+  works). A v1 save's `office: true` lot is migrated to that in `_sanitize` (with a news line).
+  Rules: `buy`, `build` (one
   tier or several), `level_up` (the first manager comes free at Nv 2), `auto_build` (the
   office's builder), `borrow` / `repay` / `set_autopay`, `pool` / `refresh_pool` / `hire`,
   `best_move`. `advance(now)` pays rent piecewise between works ends (the builder starts new
@@ -172,8 +190,13 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   then `parcel()`: lots (Plotter.split), each side tested against the street kerbs (`_frontage`:
   a side whose middle and one more point lie within half the street's width + `PAVEMENT` +
   `FRONT_TOL` of a street faces it), slivers / thin / street-less blocks become `courts` of kind
-  `garden`, pre-built tiers, then the office's lot. `upgrade()` re-parcels a v2 file from its
-  saved blocks and roads (same result as a fresh bake).
+  `garden`, pre-built tiers, then the office's lot (a solar, `OFFICE_LOT_TIER`), then the
+  office's pin (`office_mark`). `upgrade()` re-parcels a v2 file from its saved blocks and roads
+  (same result as a fresh bake).
+- `office_mark.gd` (`OfficeMark`) - where the office's pin stands: the open ground (no lot within
+  `LOT_CLEAR`, no asphalt or rail bed, no water, inside the disc) nearest the clicked point,
+  searched in rings out to `REACH`; among the spots up to `PREFER` m farther, the one nearest the
+  viewer. `at(block)` reads `office_mark` or works it out and keeps it in the block.
 - `street_graph.gd` (`StreetGraph`) - polygonizes the streets (plus the disc edge): node every
   crossing, weld at 0.5 m, prune dead ends, walk the faces (leave each node by the next way
   clockwise; bounded faces are counter-clockwise). Elevated motorways and trams do not bound
@@ -194,7 +217,9 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   trimmed to the wall) in painter's order, all in the lot's number (`r + g * 256 = lot + 1`):
   `lot_at(px)` is whatever lot is drawn there, a tower's roof included; `outline(lot)` gives
   the two pixel rings around it as runs (cached). `lots` = AreaBuilder's per-lot entries.
-  `street_labels()` gives label spots for the overlay; `pops` the roofs income pops rise from.
+  `street_labels()` gives label spots for the overlay; `pops` the roofs income pops rise from;
+  `mark_box` the office's pin, `sign_box` it with a margin (labels keep clear), and
+  `points_at_mark(px, grow)` (live mode: the depth image says nothing stands in front).
   `live` mode (the game): any lot may become a skyscraper, so the drawing leaves room; the
   builder and the image are kept, and `redraw_lot(i)` re-lays one lot (`AreaBuilder.rebuild_lot`)
   and redraws only the rectangle it touches (old and new buildings and shadows + a margin; only
@@ -218,9 +243,12 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   (`_spots`: axis-aligned squares well inside the lot) on a paved plaza; 5 a skyscraper with a
   gold crown on a podium on a plaza; industrial 1-2 = sheds in a yard; a plot with `works` = a
   building site (fence, concrete floors under a skeleton, scaffolding, a tower crane from
-  bloque up). The office's lot is owned tier-3 blocks with one modest three-storey office
-  (cyan shop front, small REALTOR plate, flag; `OFFICE_SIZE` cap) on a front site near the clicked
-  point. Owned = teal roofs + cyan flags; an owned solar flies a flag instead of the sale sign.
+  bloque up). The office has no building: `_office_mark` draws a dashed gold ring on the ground
+  (`pre`, under everything that stands) and a gold map pin sprite (`office`, the city map's
+  house in its head; an object of no lot, so it sorts, outlines and goes through the depth pass
+  like a lamp but never into the pick image) at `OfficeMark.at`; street trees, lamps, people and
+  garden trees keep `MARK_CLEAR` from it. The lot the office was placed on is an ordinary lot.
+  Owned = teal roofs + cyan flags; an owned solar flies a flag instead of the sale sign.
   Each lot's ground ops (`lot_ground`), shadows (`lot_shadows`) and objects are kept apart so
   `rebuild_lot` can lay it out again; `lots[i].roof` is where its pops rise; `tags` off leaves the
   price tags to the game. Every object records its `lot`; buildings fade per lot (`lots[i].active`
@@ -277,7 +305,7 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   the active radius and darkened per pixel in cast shadows, via the palette's tables
   (`blend_disabled`, never off-palette).
   `frozen` + `run(n)` let tools step it. In the game OfficeView freezes and hides it while a
-  full-window panel (bank, manager) covers the map, and re-attaches it to the new drawing and
+  full-window panel (bank, office tab) covers the map, and re-attaches it to the new drawing and
   radius after a level-up.
 - `car_sprites.gd` (`CarSprites`) - the vehicles (5 car colours, taxi, 2 vans, bus) in 16
   headings, with and without brake lights, drawn once per session with Painter + the facade
@@ -316,25 +344,31 @@ The office view is the mockup's renderer ported to the GPU, pixel for pixel in s
   part of it: price tags, arrows, bars and pops come from the game, live. `render_office` still
   draws AreaBuilder's own placeholder tags (`PRICE_M2`) for one-off renders.
 
-## Save format (`tiny-realtor-save` v1, `user://save.json`)
+## Save format (`tiny-realtor-save` v2, `user://save.json`)
 
 Written through `save.json.tmp`, the previous file kept as `save.json.bak`.
-`format`, `version` 1, `money`, `seen` (unix seconds paid up to; only grows), `created`,
+`format`, `version` 2, `money`, `seen` (unix seconds paid up to; only grows), `created`,
 `last_office` (opened at start), `autopay` (0 / 0.1 / 0.25 / 0.5), `loans` {quick | normal |
 mortgage: {debt, lent (incl. fee; growth stops at 1.5x), taken}}, `stats` {earned, interest,
 fees, repaid, built, bought, loans}, `offices` {office id: {level, office_lot, works (tiers
 raised, for inflation), auto (builder on), lots {lot id: {t (tier), k (rent multiplier), pk
-(price multiplier), mx (max tier), office (true for the office lot), to / start / end (works)}},
+(price multiplier), mx (max tier), fill (true while the office's free lot waits for its
+multipliers from the area), to / start / end (works)}},
 manager (null or {name, face (portrait seed), rarity 0-3, traits [{k, v}], level}), pool {n,
 at, refreshes, list [candidates with slot, hired]}}}. Only owned lots are stored; the rest come
 from the office file. Rents and prices are kept per lot so income needs no office file.
+v1 (the office stood on its lot): that lot was `{t: 3, k: 0, mx: 3, office: true}` and paid
+the office's rent; on load it becomes the free solar `{t: OFFICE_LOT_TIER, fill: true}` and the
+office's rent is its `office_income`, so a migrated game earns the same.
 
 ## Office area format (`tiny-realestate-block` v3)
 
 Metres, x east / y north, already turned by `rotation_deg` so streets follow the axes; origin =
 the office. Top level: `format`, `format_version` 3, `source`, `attribution`, `center {lat, lon}`,
 `rotation_deg`, `radius_m`, `seed`, `fetched`, `data_source` (`osm` | `fixture`), `stats`,
-`office_plot` (lot id or ""), `office` (the meta also kept in the index: id, city, name, lat,
+`office_plot` (lot id or "": the lot the player gets free, a solar in fresh bakes),
+`office_mark` ([x, y] metres: the office's pin, OfficeMark; files without it work it out when
+drawn), `office` (the meta also kept in the index: id, city, name, lat,
 lon, level, max_radius, active_radius, created, source, stats), and the layers:
 `roads[] {name, ref, kind, width, line, oneway?}` (`oneway` 1 = along the line, -1 = against
 it, absent = two-way; files baked before it have none), `rails[] {kind, line}`, `greens[] {kind, poly}`,
@@ -383,27 +417,31 @@ godot --headless --path . --script res://tools/net_check.gd     # one small real
 `xvfb-run -a -s "-screen 0 1280x1024x24" godot --path . --rendering-driver opengl3 --audio-driver Dummy`
 (mesa llvmpipe), because `--headless` renders nothing. The capture drives the real flow: city
 list, Barcelona map, cursor, confirm, loading, office (x2, a hovered lot, a selected lot with
-its card, then Esc must close it), then plays the game in it (`NN_game_*`: the HUD, a solar's
-buy card, bought + undo toast, build card, works with a crane, the office card, level 2, the
-bank, a loan sheet, the manager, the welcome-back card, a fully grown area x1/x2, the 200 px
-window), x3 close-up, x1 far, the red
+its card, then Esc must close it), then plays the game in it (`NN_game_*`: the HUD, the
+office's pin pointed at, the office tab opened by clicking it (Esc closes it), a solar's buy
+card, bought + undo toast, build card, works with a crane, the office tab from the level line
+and the level-up in it, level 2, the bank, a loan sheet, the office tab at Nv 2 and its GERENTE
+page, the welcome-back card, a fully grown area x1/x2, the 200 px window), x3 close-up, x1 far, the red
 too-close cursor, offices in Tokyo and Warsaw, then the busy-server screen. Extra args: `--fixture`, `--fresh` (also re-download city maps;
 offices are always wiped first), `--spot=city:lat:lon` (repeatable, replaces the places),
 `--raw-cache=DIR`. Under Xvfb a `WARNING: Could not set V-Sync mode` line is normal.
 
 Other tools: `bake_check.gd -- --raw=/abs/answer.json --lat= --lon= [--city]` bakes a saved raw
 Overpass answer (checks: polygons, every lot faces a street, 20..600 lots per 500 m area, an
-office lot); `bake_check.gd -- --upgrade=/abs/office_v2.json` checks the v2 -> v3 upgrade;
+office lot, the office's pin on open ground and found again from the file); `bake_check.gd -- --upgrade=/abs/office_v2.json` checks the v2 -> v3 upgrade;
 `seed_cache.gd` files a raw answer under the name `--raw-cache` looks for;
 `tools/cloud/render_office.gd -- --out=/abs/dir [--file=/abs/office.json] [--tiers]` (under
 xvfb-run like the capture) renders saved offices alone (whole drawing + x2 crop; v2 files are
 upgraded in memory) in seconds and fails on any pixel off the palette; `--tiers` adds
 `<id>_tiers.png`, lots near the office rebuilt at each tier (+ sheds and the office lot), each
 outlined in gold and labelled (`docs/screenshots/tiers_valencia.png`); `--redraw` buys,
-rebuilds and starts works on four lots through `BlockView.redraw_lot`, prints each redraw's
+rebuilds and starts works on four lots (the office's own lot among them) through
+`BlockView.redraw_lot`, prints each redraw's
 main-thread time, saves `<id>_redraw.png` (before | after) and fails when the result differs
-from a fresh drawing by more than a few pixels. `docs/screenshots/game/` holds the game's shots
-on real Valencia data (`office_before_after_valencia.png`: the old big office | the modest one;
+from a fresh drawing by more than a few pixels. `docs/screenshots/office_tab/` shows the
+office without a building (Valencia: the start before | after, the office tab, its manager page,
+a grown area with the old office lot built high). `docs/screenshots/game/` holds the game's
+shots on real Valencia data (`office_before_after_valencia.png`: the old big office | the modest one;
 `lot_redraw_valencia.png`: four lots redrawn one at a time). `render_office --redraw` also
 compares Traffic's depth and shadow images after the redraws with a fresh drawing's.
 `tools/cloud/game_traffic.gd -- --out=/abs/dir [--id=office]` (xvfb-run) opens a saved office in
@@ -413,7 +451,8 @@ builds a tower there through the one-lot redraw and fails if any pixel of the ca
 (`cars_hide_<city>.png`: before | after, x3). It overwrites `user://save.json`.
 `game_check.gd` drives the rules with a fake clock (buy, build, multi-tier, rent, level up and
 the free manager, saves, time away and its cap, clock moved back and forth, a broken save, the
-bank's limits and an adversarial max-loan + lost income + week away, managers, the builder).
+bank's limits and an adversarial max-loan + lost income + week away, managers, the builder, the
+office's free lot built like any other and its income by level, a v1 save migrated on load).
 `econ_sim.gd [-- --file=/abs/office.json] [--days=N] [--only=ideal,widget,lazy,loans,abuser,absent]`
 plays kinds of player and prints milestones and snapshots (fixture area by default); it exits 1
 if any player ever has interest above the cap or debt that does not shrink with autopay. `docs/screenshots/style_a_side_by_side.png` is the mockup next to the

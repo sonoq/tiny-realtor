@@ -32,13 +32,17 @@ const AREA_MAX := 1.6
 # what the price feels of a lot's location bonus, against what its rent gets
 const PRICE_OF_MODS := 0.5
 
-# per office level (level 1 first): what reaching the next level costs, the office lot's own
-# rent per minute, how many works can run at once, and the offline earnings cap (hours)
+# per office level (level 1 first): what reaching the next level costs, the office's own income
+# per minute (its commissions: the office is a business, not a building, and earns on its
+# neighbourhood), how many works can run at once, and the offline earnings cap (hours)
 const LEVEL_COST: Array[float] = [60e3, 15e6, 8e9, 250e9]
-const OFFICE_RENT: Array[float] = [2e3, 12e3, 60e3, 300e3, 1.5e6]
+const OFFICE_INCOME: Array[float] = [2e3, 12e3, 60e3, 300e3, 1.5e6]
 const CRANES: Array[int] = [1, 2, 2, 3, 3]
 const OFFLINE_HOURS: Array[float] = [12.0, 14.0, 16.0, 20.0, 24.0]
-const START_MONEY := 50e3
+const START_MONEY := 35e3
+# the lot where the office is placed is the player's from the start, free, as an ordinary lot
+# at this tier (a solar: the first build is on it)
+const OFFICE_LOT_TIER := 0
 # a later office: what it costs, and the level some office must have reached first
 const OFFICE_COST: Array[float] = [0.0, 3e9, 300e9, 10e12]
 const OFFICE_NEEDS_LEVEL := 3
@@ -120,15 +124,15 @@ const RAIL_REACH := 15.0
 
 
 static func max_level() -> int:
-	return OFFICE_RENT.size()
+	return OFFICE_INCOME.size()
 
 
 static func level_cost(level: int) -> float:
 	return LEVEL_COST[level - 1] if level < max_level() else INF
 
 
-static func office_rent(level: int) -> float:
-	return OFFICE_RENT[clampi(level, 1, max_level()) - 1]
+static func office_income(level: int) -> float:
+	return OFFICE_INCOME[clampi(level, 1, max_level()) - 1]
 
 
 static func cranes(level: int) -> int:
