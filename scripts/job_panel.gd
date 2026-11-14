@@ -162,7 +162,7 @@ func _draw_intro(c: CanvasItem) -> void:
 	var x := INTRO_CARD.position.x + 22.0
 	var y := INTRO_CARD.position.y + 40.0
 	_fit(c, Vector2(x, y), "Inquilino de " + street, INTRO_CARD.size.x - 44.0, Ui.CREAM)
-	var lines := wrap(job.how() + " · %d s" % roundi(job.limit), INTRO_CARD.size.x - 44.0)
+	var lines := wrap_text(job.how() + " · %d s" % roundi(job.limit), INTRO_CARD.size.x - 44.0)
 	for k in mini(2, lines.size()):
 		Ui.text(c, Vector2(x, y + 32 + k * 24), lines[k], Ui.SMALL, Ui.MUTED, Ui.TEN)
 	Ui.coin(c, Vector2(x, y + 86))
@@ -219,7 +219,7 @@ static func _star(c: CanvasItem, at: Vector2, color: Color) -> void:
 
 
 # words in lines that fit `room` in the small font
-static func wrap(s: String, room: float) -> Array[String]:
+static func wrap_text(s: String, room: float) -> Array[String]:
 	var out: Array[String] = []
 	var line := ""
 	for word in s.split(" ", false):

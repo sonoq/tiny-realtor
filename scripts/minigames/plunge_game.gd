@@ -11,12 +11,15 @@ const GOAL := 6
 const GAUGE := Rect2(64, 416, 472, 40)
 const PUSH := Rect2(170, 468, 260, 56)
 const MARK_W := 12.0
-# sweeps across and back per second, at the start and added per good push
-const SPEED0 := 0.55
-const SPEED_UP := 0.07
-const ZONE0 := 0.24
-const ZONE_MIN := 0.13
-const MISS_WAIT := 0.45
+# sweeps across and back per second, at the start and added per good push; the zone's width
+# (share of the gauge) at the start, lost per good push, and at least: the marker stays at least
+# a tenth of a second in the last zone, so it asks for timing, not reflexes
+const SPEED0 := 0.5
+const SPEED_UP := 0.05
+const ZONE0 := 0.26
+const ZONE_LOSS := 0.015
+const ZONE_MIN := 0.16
+const MISS_WAIT := 0.7
 const PUSH_S := 0.22
 const TOILET_AT := Vector2(220, 160)
 const PX := 8.0
@@ -25,7 +28,7 @@ const TOILET: Array[String] = [
 	"...kwwwwwwwwwwwwk...",
 	"....kkkkkkkkkkkk....",
 	"....kwwwwwwwwwlk....",
-	"....kwskwwwwwwlk....",
+	"....ksssswwwwwlk....",
 	"....kwwwwwwwwwlk....",
 	"....kllllllllllk....",
 	"..kkkkkkkkkkkkkkkk..",
@@ -121,7 +124,7 @@ func press(at: Vector2) -> void:
 			_win()
 			return
 		_speed += SPEED_UP
-		_zone_w = maxf(ZONE_MIN, _zone_w - 0.02)
+		_zone_w = maxf(ZONE_MIN, _zone_w - ZONE_LOSS)
 		_new_zone()
 		_wait_until = t + 0.12
 	else:
@@ -205,7 +208,8 @@ func _draw_plunger(c: CanvasItem) -> void:
 	if won:
 		down = -minf(since, 0.4) * 120.0
 	var x := TOILET_AT.x + 10.0 * PX
-	var cup_y := TOILET_AT.y + 9.0 * PX + roundf(down / 4.0) * 4.0 - 22.0
+	# at rest the cup sits on the seat, the muddy water in sight; a push sinks it in
+	var cup_y := TOILET_AT.y + 9.0 * PX + roundf(down / 4.0) * 4.0 - 30.0
 	# the handle up out of the frame of the tank, the red rubber cup on the water
 	JobGame.inked(c, Rect2(x - 6, AREA.position.y + 6, 12, cup_y - AREA.position.y - 6),
 		Pal.c("WOOD"), 4.0)
