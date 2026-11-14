@@ -6,7 +6,7 @@ extends SceneTree
 #                       where most people cross, for an animated GIF:
 #                       ffmpeg -framerate 10 -i gif/%03d.png -vf "split[a][b];[a]palettegen[p];\
 #                           [b][p]paletteuse" walkers.gif
-#   walkers_sheet.png - a contact sheet of the middle of every fifth of them (0.5 s apart)
+#   walkers_sheet.png - a contact sheet of the middle of every sixth of them (0.6 s apart), x2
 #   game_x2.png       - the whole window at x2 on the office, as the game opens it
 #   sprites.png       - the walkers' sprite atlas, x6
 # then prints BENCH lines (walkers' and cars' ms per tick).
@@ -16,8 +16,10 @@ extends SceneTree
 #       --script res://tools/cloud/walker_frames.gd -- --file=/abs/office.json --out=/abs/dir \
 #       [--gif=70] [--settle=40]
 
-const SHEET_CROP := Vector2i(200, 200)
+# the sheet: every SHEET_EVERY-th frame, the middle SHEET_CROP of it shown twice as big
+const SHEET_CROP := Vector2i(150, 150)
 const SHEET_COLS := 4
+const SHEET_EVERY := 6
 
 var _out := "user://walkers"
 var _app: App
@@ -79,19 +81,22 @@ func _init() -> void:
 	_centre_on(view, at)
 	traffic.run(1)
 	await _frames(2)
-	var rows := ceili(ceili(gif / 5.0) / float(SHEET_COLS))
-	var sheet := Image.create(SHEET_CROP.x * SHEET_COLS, SHEET_CROP.y * rows, false,
-		Image.FORMAT_RGBA8)
+	var rows := ceili(ceili(gif / float(SHEET_EVERY)) / float(SHEET_COLS))
+	var tile := SHEET_CROP * 2
+	var sheet := Image.create(tile.x * SHEET_COLS + SHEET_COLS - 1,
+		tile.y * rows + rows - 1, false, Image.FORMAT_RGBA8)
+	sheet.fill(Pal.c("INK"))
 	var crossed := walkers.crossed
 	for k in gif:
 		traffic.run(1)
 		var img := await _grab()
 		img.save_png("%s/gif/%03d.png" % [_out, k])
-		if k % 5 == 0:
-			var f := k / 5
-			var corner := Vector2i(300, 330) - SHEET_CROP / 2
-			sheet.blit_rect(img, Rect2i(corner, SHEET_CROP),
-				Vector2i(f % SHEET_COLS, f / SHEET_COLS) * SHEET_CROP)
+		if k % SHEET_EVERY == 0:
+			var f := k / SHEET_EVERY
+			var part := img.get_region(Rect2i(Vector2i(300, 330) - SHEET_CROP / 2, SHEET_CROP))
+			part.resize(tile.x, tile.y, Image.INTERPOLATE_NEAREST)
+			sheet.blit_rect(part, Rect2i(Vector2i.ZERO, tile),
+				Vector2i(f % SHEET_COLS, f / SHEET_COLS) * (tile + Vector2i.ONE))
 	sheet.save_png(_out + "/walkers_sheet.png")
 	print("FILMED %d frames at %s: %d walkers, %d cars, %d crossed meanwhile" % [gif, at,
 		walkers.count, traffic.count, walkers.crossed - crossed])
@@ -111,41 +116,35 @@ func _init() -> void:
 	quit(0)
 
 
-# runs the clock `settle` seconds, counting who steps onto which crossing near the office (one no
-# building hides), and gives the middle of the busiest junction's crossings
+# runs the clock `settle` seconds, then on until someone steps onto a crossing near the office
+# (one no building hides, over a street at least 8 m wide) with the most people around, and gives
+# that crossing's middle a little towards where the walker is heading
 func _busiest(view: OfficeView, traffic: Traffic, settle: int) -> Vector2:
 	var w := traffic.walkers
 	var n := w.net
 	var depth := view._view.depth_tex.get_image()
-	var hits := {}
-	var was := PackedInt32Array()
-	was.resize(Walkers.CAP)
-	was.fill(-1)
-	for k in settle * 10:
+	traffic.run(settle * 10)
+	var best := Vector2.ZERO
+	var most := -1
+	for k in 600:
 		traffic.run(1)
 		for i in w.count:
 			var c := w.on_cross[i]
-			if c >= 0 and was[i] != c and n.c_mid[c].length() < 100.0 \
-					and _in_sight(view, depth, n.c_mid[c]):
-				hits[c] = int(hits.get(c, 0)) + 1
-			was[i] = c
-	# the junction whose crossings (those within 30 m of one another) saw the most
-	var best := Vector2.ZERO
-	var most := 0
-	for c: int in hits:
-		var sum := 0
-		var at := Vector2.ZERO
-		for o: int in hits:
-			if n.c_mid[o].distance_to(n.c_mid[c]) < 30.0:
-				sum += int(hits[o])
-				at += n.c_mid[o] * float(hits[o])
-		if sum > most:
-			most = sum
-			best = at / sum
-	if most == 0:
-		print("WALKERS: nobody crossed near the office in %d s" % settle)
-	print("WALKERS: junction at %s, %d people stepped onto its crossings in %d s" % [best, most,
-		settle])
+			if c < 0 or w.t[i] > 2.5 or n.c_half[c] < 4.0 or n.c_mid[c].length() > 100.0 \
+					or not _in_sight(view, depth, n.c_mid[c]):
+				continue
+			var around := 0
+			for j in w.count:
+				if w.pos[j].distance_to(n.c_mid[c]) < 35.0:
+					around += 1
+			if around > most:
+				most = around
+				best = n.c_mid[c]
+		if most >= 4 or (most >= 0 and k > 300):
+			print("WALKERS: a crossing at %s, %d people around, after %d s" % [best, most,
+				settle + (k + 1) / 10])
+			return best
+	print("WALKERS: nobody crossed near the office")
 	return best
 
 

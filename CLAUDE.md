@@ -262,7 +262,8 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   `rebuild_lot` can lay it out again; `lots[i].roof` is where its pops rise; `tags` off leaves the
   price tags to the game. Every object records its `lot`; buildings fade per lot (`lots[i].active`
   = centroid inside the radius). Trees (gardens, parks, street trees), lamps and people inside
-  the active radius, cars, price tags (`price_tag`, `price_of`) on the nearest signed lots. All
+  the active radius (people only when `people` is on: one-off renders; the game's live
+  drawing leaves them to Walkers), cars, price tags (`price_tag`, `price_of`) on the nearest signed lots. All
   placement by stable hashes.
 - `skyline.gd` (`Skyline`) - the two top tiers as plans (data only; AreaBuilder draws them and
   lays their works out from them). **Height cap** so a grown area reads in the widget: torres
@@ -294,7 +295,8 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
 - `docs/prototype/` - the Python prototype (Pillow + Shapely); its `block_raw_overpass.json` is
   the hand-made Eixample sample the fixture uses. Not shipped.
 
-**Traffic** (moving cars over the office drawing; `docs/screenshots/traffic/`)
+**Traffic** (moving cars and walking people over the office drawing;
+`docs/screenshots/traffic/`, `docs/screenshots/walkers/`)
 - `road_net.gd` (`RoadNet`) - the area's roads (pedestrian streets aside) as lanes: lines split
   where they cross or touch (`split_crossings`), junctions under `MERGE` (8 m) apart or whose
   boxes overlap merged;
@@ -319,7 +321,8 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   standing along it (`_swept_clear`; while something does the car is `held` and the others do
   not give way to it), clear of every reserved conflicting connector, nobody free to go
   waiting longer for a conflicting one, room on the street beyond; when that street is too
-  short to wait on, the next junction is reserved in the same go (`nxt2`). Safeguards (`_would_hit`, `_into_way`) keep footprints apart in odd
+  short to wait on, the next junction is reserved in the same go (`nxt2`); a car held up by
+  the car in front on its lane is `held` too. Safeguards (`_would_hit`, `_into_way`) keep footprints apart in odd
   geometry; who waits for whose junction decides who gives way, so it never deadlocks.
   Cars gather around the view (`set_view`): the target count is the lanes' density within
   reach of the view's corners; a car far out of reach (or stuck 40 s) and out of sight is
@@ -333,10 +336,43 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   (`blend_disabled`, never off-palette).
   `frozen` + `run(n)` let tools step it. In the game OfficeView freezes and hides it while a
   full-window panel (bank, office tab) covers the map, and re-attaches it to the new drawing and
-  radius after a level-up.
+  radius after a level-up. It owns the `walkers` (below): steps them after the cars each tick,
+  draws them in the same batch sorted with the cars (COLOR.b: bit 1 = faded, bit 2 = a walker:
+  its own atlas `walk_atlas` and `WALK_TOL` 0.3 m), and its cars keep out of crossings people
+  are on (`_walk_gap`), stop before the zebra while they wait for their junction
+  (`_zebra_line`, `CROSS_STOP`), never ask for their way while people cross just before or
+  after the junction, and never start on a crossing.
 - `car_sprites.gd` (`CarSprites`) - the vehicles (5 car colours, taxi, 2 vans, bus) in 16
   headings, with and without brake lights, drawn once per session with Painter + the facade
   shader + ink outline like AreaBuilder's parked cars, read back to palette indices.
+- `walk_net.gd` (`WalkNet`) - the pavements as a walking network: each block's ring
+  `RING_OUT` (0.95 m) out, between the shop fronts and the street trees, kept where it runs by a
+  street (near a kerb, on no carriageway, `BLOCK_CLEAR` off every lot and garden, inside the
+  disc); crossings from `zebra_spots()` (AreaBuilder's zebra rule, copied: keep the two in step;
+  plus unpainted ones at corners of narrow streets, over pedestrian streets and where streets
+  cross without sharing a point, as `RoadNet.split_crossings` splits them), each marched across
+  to the first walkway on both sides, cut at medians (`MEDIAN`) into one crossing per
+  carriageway, dropped when over `SPAN_MAX` of road or running along a street (`SLANT_MAX`).
+  Walkways are edges of at most `PIECE` m between nodes (crossing ends, run ends); edge kinds
+  PAVE / CROSS / FREE (no cars); per crossing its kerbs along the edge (`c_k0`, `c_k1`) and the
+  `busy` count Walkers keeps. `bands(roadnet, path)` (cached per path, lazily as junction curves
+  appear) gives where a car path runs through each crossing's band (`BAND` 1.6 m either side
+  of its line). Built on a thread (~0.3 s on a real area) while the office is drawn.
+- `walkers.gd` (`Walkers`) - up to `CAP` (48) people, struct-of-arrays, owned and stepped by
+  Traffic at its tick: keep right (`LAT_MIN..LAT_MAX`), own pace, pick their way at random at
+  every node (crossings preferred, no queueing three deep), step out to pass someone in the way
+  (`DODGE`, never on a crossing), now and then stop at a shop front (dog walkers more), never
+  come closer than `SEP` (0.45 m) to anyone (whoever moves later in the tick checks against the
+  other's new place), turn back when held up `STUCK_TURN` s. At a crossing they wait
+  `WAIT_BACK` before the kerb and step out (`busy`) only when no car is on it, none is coming
+  too fast to stop gently, none has its junction (`granted`) or has waited `CAR_TURN` s on its
+  way through it; on it they never wait for a car; they give up after `PATIENCE` s. Gather
+  round the view like the cars (`DENSITY` per 100 m of walkway within `REGION` of Traffic's
+  reach), one seeded RNG per office.
+- `walker_sprites.gd` (`WalkerSprites`) - the people: a one-pixel column of shoes, trousers,
+  shirt, face and hair (the static people's look) with a hand, in 16 `LOOKS`, 4 headings
+  (towards / away, right / left) x 3 walk frames, alone, with a dog or a pram; painted on the
+  CPU into an index atlas like CarSprites'.
 - AreaBuilder keeps static cars only parked at the kerb: both kerbs of 12-18 m streets (whose
   lanes sit at 0.22 of the width from the middle), one kerb of 8.5-10 m one-way streets (one
   lane down the middle); BlockBaker keeps each road's `oneway`.
@@ -433,6 +469,7 @@ godot --headless --path . --import                # after adding/renaming files
 godot --headless --path . --quit-after 300        # boots main.tscn for 300 frames
 godot --headless --path . --script res://tools/bake_check.gd   # bakes fixtures, checks lots
 godot --headless --path . --script res://tools/traffic_check.gd # 10 simulated min of traffic
+godot --headless --path . --script res://tools/walker_check.gd  # 5 simulated min of walkers
 godot --headless --path . --script res://tools/game_check.gd   # the game's rules, saves, bank
 godot --headless --path . --script res://tools/econ_sim.gd     # pacing table + bank promises
 bash tools/cloud/screenshot.sh docs/screenshots --fixture       # the whole flow on test data
@@ -503,6 +540,22 @@ office in the real game with the traffic clock stopped and stepped by hand: `gif
 x2 round the busiest junction near the office (one tick apart; its header has the ffmpeg line
 that makes `traffic.gif`), `junction_sheet.png`, `hidden.png` (a car behind a building with
 and without the depth test) and `BENCH` lines (sim ms per tick, frame times traffic off / on).
+
+Walkers: `walker_check.gd [-- --file=/abs/office.json] [--minutes=5]` runs the fixture areas
+(and any saved office) with their traffic and fails when a walker leaves the pavement (onto a
+carriageway, a lot or a garden) or its crossing, is on the road without holding the crossing,
+two walkers' middles come within 0.3 m, a walker stands under a car, jumps (> 0.5 m a tick) or
+stands still over 60 s, a crossing stays busy over 90 s, a car waits over 60 s for people, a
+busy count is wrong, nobody crosses, or a seed plays differently (~25 s).
+`tools/cloud/walker_frames.gd -- --file=/abs/office.json --out=/abs/dir [--gif=70]` (xvfb-run)
+opens an office in the real game (welcome card dismissed), saves `game_x2.png`, waits for
+someone to step onto a visible crossing near the office with people around and films
+`gif/NNN.png` at x3 one tick apart (the ffmpeg line is in its header), `walkers_sheet.png`
+(every 6th frame's middle, x2), `sprites.png` (the atlas, x6) and `BENCH` lines.
+Known: on the real Valencia area the junction at about (5, 126) m, where a side street meets
+the Gran Via's carriageway inside its queue, can starve a car for minutes; it happens without
+walkers too (traffic_check fails there with other seeds), so walker_check judges only the
+waits people cause.
 
 **Network in the cloud container**: Overpass hosts must be on the environment's allowlist. In
 this container overpass-api.de reset every TLS handshake, overpass.kumi.systems timed out and
