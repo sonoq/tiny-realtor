@@ -14,6 +14,10 @@ extends Node2D
 # of sight is taken off and a new one comes in out of sight, near the view. Every choice comes
 # from one RandomNumberGenerator seeded by the office id, so a seed always plays the same.
 #
+# People walk the pavements too (Walkers, stepped here after the cars and drawn in the same
+# batch, sorted with them): at a crossing they wait for a gap, and while one is on it the cars
+# keep out (`walkers.net.busy`); cars waiting for their junction stop before the zebra.
+#
 # Occlusion: BlockView's depth pass holds, per drawing pixel, the depth of what is drawn there;
 # the car shader hides a car's pixel where something nearer than the car stands (a building in
 # front, a tree on the near pavement, a price tag), and shades it in cast shadows and fades it
@@ -27,8 +31,11 @@ const BRAKE := 3.0
 const GAP := 1.6
 # cars look at the junction ahead from this far (m)
 const LOOK := 10.0
-# depth a building must stand in front of a car's middle to hide it (m)
+# depth a building must stand in front of a car's middle to hide it (m), and a walker's feet
 const HIDE_TOL := 1.5
+const WALK_TOL := 0.3
+# cars stop this far (m) before a crossing's band
+const CROSS_STOP := 0.6
 # seconds simulated before the first frame, so queues have formed at the junctions
 const WARMUP := 6.0
 # a car further than this from the view's middle (beyond its corners) may be swapped out (m)
@@ -39,6 +46,8 @@ const SPRITE_PAD := 24.0
 const CELL := 12.0
 # seconds between redraws of the moving cars
 const DRAW_EVERY := 1.0 / 30.0
+# sprites drawn in one go: the cars and the walkers
+const QUADS := CAP + Walkers.CAP
 # a footprint's half width, and how much shorter it counts than the car (m)
 const HALF_W := 0.85
 const SHRINK := 0.15
@@ -49,6 +58,8 @@ const LEFT_HAND: Array[String] = ["Reino Unido", "Japón", "Singapur", "Australi
 	"Irlanda", "Sudáfrica", "Nueva Zelanda", "Tailandia", "Indonesia", "Hong Kong"]
 
 var net: RoadNet
+# the people on the pavements, null without
+var walkers: Walkers
 # how many cars there are and want to be
 var count := 0
 var target := 0
@@ -113,7 +124,11 @@ var _active := 1.0e9
 var _since_draw := 0.0
 var _px := PackedVector2Array()
 var _drawn := PackedVector2Array()
+var _wpx := PackedVector2Array()
+var _wdrawn := PackedVector2Array()
 var _order := PackedInt32Array()
+# per sprite (cars, then walkers) its ground depth, bigger is nearer
+var _keys := PackedFloat32Array()
 var _quad_pts := PackedVector2Array()
 var _quad_uv := PackedVector2Array()
 var _quad_col := PackedColorArray()
@@ -134,6 +149,8 @@ func setup(block: Dictionary, origin: Vector2, seed_key: String) -> void:
 	var country: String = CityDb.get_city(office.get("city", "")).get("country", "")
 	net = RoadNet.new()
 	net.build(block.get("roads", []), country in LEFT_HAND, float(block.get("radius_m", 500.0)))
+	walkers = Walkers.new()
+	walkers.setup(block, origin, seed_key, self)
 	path.resize(CAP)
 	nxt.resize(CAP)
 	nxt2.resize(CAP)
@@ -157,12 +174,15 @@ func setup(block: Dictionary, origin: Vector2, seed_key: String) -> void:
 	_adv.resize(CAP)
 	_exit.resize(CAP)
 	_link.resize(CAP)
-	_order.resize(CAP)
-	_quad_pts.resize(CAP * 4)
-	_quad_uv.resize(CAP * 4)
-	_quad_col.resize(CAP * 4)
-	_quad_idx.resize(CAP * 6)
-	for i in CAP:
+	_order.resize(QUADS)
+	_keys.resize(QUADS)
+	_wpx.resize(Walkers.CAP)
+	_wdrawn.resize(Walkers.CAP)
+	_quad_pts.resize(QUADS * 4)
+	_quad_uv.resize(QUADS * 4)
+	_quad_col.resize(QUADS * 4)
+	_quad_idx.resize(QUADS * 6)
+	for i in QUADS:
 		for k in 6:
 			_quad_idx[i * 6 + k] = i * 4 + [0, 1, 2, 0, 2, 3][k]
 	_first.resize(net.path_count())
@@ -190,6 +210,7 @@ func set_view(rect: Rect2) -> void:
 	_view = rect
 	if net == null:
 		return
+	walkers.set_view(rect)
 	var c := _ground(rect.get_center())
 	var far := 0.0
 	for corner: Vector2 in [rect.position, rect.end, Vector2(rect.position.x, rect.end.y),
@@ -212,15 +233,19 @@ func set_view(rect: Rect2) -> void:
 				_near.append(l)
 				_near_total += _spawn_w[l]
 	target = clampi(roundi(want), 6 if want > 3.0 else 0, CAP)
+	walkers.set_region(_centre, _reach)
 
 
 # fills the streets near the view and lets them settle for a few seconds, so the first frame
 # already shows cars queued at junctions rather than all freshly placed
 func populate() -> void:
+	# the crossings: where new cars may not start
+	walkers.ensure()
 	for k in target * 4:
 		if count >= target:
 			break
 		_spawn(true)
+	walkers.populate()
 	for k in roundi(WARMUP / TICK):
 		step()
 
@@ -229,6 +254,8 @@ func populate() -> void:
 # show once their atlas is ready
 func attach(view: BlockView, active_radius: float) -> void:
 	material = _material(view, active_radius)
+	WalkerSprites.build()
+	(material as ShaderMaterial).set_shader_parameter("walk_atlas", WalkerSprites.atlas)
 	populate()
 	# drawn under the root (it outlives this screen); _process waits for it
 	CarSprites.build(get_tree().root)
@@ -242,6 +269,9 @@ func run(n: int) -> void:
 	for i in count:
 		prev[i] = pos[i]
 		_px[i] = _screen(pos[i]).round()
+	for i in walkers.count:
+		walkers.prev[i] = walkers.pos[i]
+		_wpx[i] = _screen(walkers.pos[i]).round()
 	queue_redraw()
 
 
@@ -279,8 +309,19 @@ func _process(delta: float) -> void:
 		if q != _drawn[i]:
 			moved = true
 		_px[i] = q
+	for i in walkers.count:
+		var q := _screen(walkers.prev[i].lerp(walkers.pos[i], t)).round()
+		if q != _wdrawn[i]:
+			moved = true
+		_wpx[i] = q
 	if moved:
 		queue_redraw()
+
+
+func _notification(what: int) -> void:
+	# never leave the walking network's thread running
+	if what == NOTIFICATION_PREDELETE and walkers != null:
+		walkers.ensure()
 
 
 # one tick of the simulation
@@ -329,6 +370,7 @@ func step() -> void:
 	if _clock % 10 == 0:
 		_upkeep()
 	tick_usec = Time.get_ticks_usec() - t0
+	walkers.step()
 
 
 # the speed car i settles on this tick and how far it may go
@@ -338,10 +380,15 @@ func _drive(i: int) -> float:
 	var top := net.speed[p] * (pace[i] if net.is_conn[p] == 0 else 1.0)
 	var want := top
 	var room := INF
+	# someone on a crossing ahead: stop before it
+	var walk := _walk_gap(i)
+	if walk < INF:
+		want = minf(want, sqrt(2.0 * BRAKE * maxf(0.0, walk - 0.3)))
+		room = maxf(0.0, walk - 0.3)
 	if net.is_conn[p] == 0 and nxt[i] < 0:
 		# nowhere to go: off the world at the disc's edge, else a stop at the end
 		if net.node_rim[net.to_node[p]] == 0:
-			room = maxf(0.0, net.length[p] - s[i] - half - 0.3)
+			room = minf(room, maxf(0.0, net.length[p] - s[i] - half - 0.3))
 			want = minf(want, sqrt(2.0 * BRAKE * room))
 	elif net.is_conn[p] == 0:
 		var to_end := net.length[p] - s[i]
@@ -350,16 +397,24 @@ func _drive(i: int) -> float:
 		want = minf(want, sqrt(vt * vt + 2.0 * BRAKE * maxf(0.0, to_end - 0.5)))
 		if granted[i] == 0 and to_end < LOOK + v[i] * v[i] / (2.0 * BRAKE):
 			wait[i] += TICK
+			# not while people cross before the junction or just after it: the others waiting
+			# there do not give way to it meanwhile
+			var held_up := walk < to_end + net.length[nxt[i]] + 6.0
+			if held_up:
+				held[i] = 1
 			# asked a few times a second, each car on its own beat
-			if (_clock + i) % 3 == 0 and _may_enter(i):
+			if not held_up and (_clock + i) % 3 == 0 and _may_enter(i):
 				granted[i] = 1
 				_reserve(net.to_node[nxt[i]], nxt[i], i)
 				if nxt2[i] >= 0:
 					_reserve(net.to_node[nxt2[i]], nxt2[i], i)
 		if granted[i] == 0:
+			# at the kerb line, or before the zebra on it
 			var line := maxf(0.0, to_end - half - 0.3)
+			if to_end < LOOK + half + 6.0:
+				line = minf(line, _zebra_line(i))
 			want = minf(want, sqrt(2.0 * BRAKE * line))
-			room = line
+			room = minf(room, line)
 	var gap := _gap(i)
 	# a car held up anyway (queued, at its kerb line) needs no look around
 	if minf(room, gap - GAP * 0.5) > 0.01:
@@ -375,6 +430,54 @@ func _drive(i: int) -> float:
 		by = 0.0
 	braking[i] = 1 if v[i] < was - 0.02 or (v[i] < 0.3 and want < 0.3) else 0
 	return by
+
+
+# distance from car i's front to the nearest crossing someone is on, along its way (this path
+# and the next two), INF for none; a crossing its front is already in does not count (it drives
+# out of it)
+func _walk_gap(i: int) -> float:
+	var wn := walkers.net
+	if wn.busy_total == 0:
+		return INF
+	var p := path[i]
+	var front := s[i] + size[i] * 0.5
+	var best := INF
+	for depth in 3:
+		var b := wn.bands(net, p)
+		for k in range(0, b.size(), 3):
+			if wn.busy[int(b[k])] > 0 and front < b[k + 1] + 0.05:
+				best = minf(best, b[k + 1] - front)
+		if best < INF:
+			return best
+		front -= net.length[p]
+		if front < -45.0:
+			break
+		if depth == 0:
+			p = nxt[i]
+		elif net.is_conn[p] == 1:
+			p = net.dst[p]
+		else:
+			break
+		if p < 0:
+			break
+	return INF
+
+
+# distance from car i's front to where it waits before a crossing at the end of its lane, INF
+# for none: a car waiting for its junction leaves the zebra clear
+func _zebra_line(i: int) -> float:
+	var p := path[i]
+	if net.is_conn[p] == 1:
+		return INF
+	var b := walkers.net.bands(net, p)
+	var front := s[i] + size[i] * 0.5
+	var best := INF
+	for k in range(0, b.size(), 3):
+		# only where it still waits within LOOK of its lane's end (where it asks for its way)
+		if b[k + 1] - CROSS_STOP - size[i] * 0.5 > net.length[p] - LOOK + 0.5 \
+				and front < b[k + 1] + 0.2:
+			best = minf(best, maxf(0.0, b[k + 1] - CROSS_STOP - front))
+	return best
 
 
 # bumper-to-bumper distance to the car ahead, on this path or the next two, INF for none
@@ -552,10 +655,12 @@ func _may_enter(i: int) -> bool:
 			if out >= 0:
 				nxt2[i] = net.connector(m, out)
 				_grow()
-	# a lane crosses in turn: never before the car in front of it
+	# a lane crosses in turn: never before the car in front of it (meanwhile it is not free to
+	# go, so the others waiting here do not give way to it)
 	var j := _first[path[i]]
 	while j >= 0:
 		if j != i and s[j] > s[i] and granted[j] == 0:
+			held[i] = 1
 			return false
 		j = _link[j]
 	# held up by a car standing in its way: the others waiting here do not give way to it
@@ -749,6 +854,11 @@ func _spawn(anywhere: bool) -> bool:
 			if pos[j].distance_to(p) < 9.0:
 				free = false
 				break
+		# nor on a crossing (someone may be on it)
+		var bands := walkers.net.bands(net, lane)
+		for n in range(0, bands.size(), 3):
+			if at + 8.0 > bands[n + 1] and at - 8.0 < bands[n + 2]:
+				free = false
 		if not free:
 			continue
 		var i := count
@@ -807,28 +917,46 @@ func _ground(px: Vector2) -> Vector2:
 func _draw() -> void:
 	if not _ready_to_draw:
 		return
-	# far cars first: nearer ones are drawn over them
-	for i in count:
-		_order[i] = i
-	for a in range(1, count):
+	# far sprites first: nearer ones are drawn over them (walkers numbered after the cars)
+	var n_all := count + walkers.count
+	for k in n_all:
+		_order[k] = k
+		_keys[k] = pos[k].x - pos[k].y if k < count \
+			else walkers.pos[k - count].x - walkers.pos[k - count].y
+	for a in range(1, n_all):
 		var x := _order[a]
-		var dx := pos[x].x - pos[x].y
+		var dx := _keys[x]
 		var b := a - 1
-		while b >= 0 and pos[_order[b]].x - pos[_order[b]].y > dx:
+		while b >= 0 and _keys[_order[b]] > dx:
 			_order[b + 1] = _order[b]
 			b -= 1
 		_order[b + 1] = x
-	for k in CAP:
+	for k in QUADS:
 		var o := k * 4
-		if k >= count:
+		if k >= n_all:
 			for c in 4:
 				_quad_pts[o + c] = Vector2.ZERO
 			continue
-		var i := _order[k]
-		var n := CarSprites.sprite(kind[i], head[i], braking[i] == 1)
-		var r := CarSprites.rects[n]
-		var at := _px[i] + CarSprites.offsets[n]
-		_drawn[i] = _px[i]
+		var x := _order[k]
+		var r: Rect2
+		var at: Vector2
+		var ground: Vector2
+		var flags := 0
+		if x < count:
+			var n := CarSprites.sprite(kind[x], head[x], braking[x] == 1)
+			r = CarSprites.rects[n]
+			at = _px[x] + CarSprites.offsets[n]
+			_drawn[x] = _px[x]
+			ground = pos[x]
+		else:
+			var w := x - count
+			var n := WalkerSprites.sprite(walkers.look[w], walkers.kind[w], walkers.head[w],
+				walkers.frame[w])
+			r = WalkerSprites.rects[n]
+			at = _wpx[w] + WalkerSprites.offsets[n]
+			_wdrawn[w] = _wpx[w]
+			ground = walkers.pos[w]
+			flags = 2
 		_quad_pts[o] = at
 		_quad_pts[o + 1] = at + Vector2(r.size.x, 0)
 		_quad_pts[o + 2] = at + r.size
@@ -837,9 +965,11 @@ func _draw() -> void:
 		_quad_uv[o + 1] = r.position + Vector2(r.size.x, 0)
 		_quad_uv[o + 2] = r.end
 		_quad_uv[o + 3] = r.position + Vector2(0, r.size.y)
-		var code := BlockView.depth_code(pos[i].x - pos[i].y)
+		var code := BlockView.depth_code(ground.x - ground.y)
 		# faded as a whole when its middle is beyond the radius, like a lot's buildings
-		var col := Color8(code & 255, code >> 8, 255 if pos[i].length() > _active else 0)
+		if ground.length() > _active:
+			flags += 1
+		var col := Color8(code & 255, code >> 8, flags)
 		for c in 4:
 			_quad_col[o + c] = col
 	RenderingServer.canvas_item_add_triangle_array(get_canvas_item(), _quad_idx, _quad_pts,
@@ -856,10 +986,12 @@ func _material(view: BlockView, active_radius: float) -> ShaderMaterial:
 render_mode blend_disabled;
 uniform sampler2D lut : filter_nearest;
 uniform sampler2D atlas : filter_nearest;
+uniform sampler2D walk_atlas : filter_nearest;
 uniform sampler2D depth_tex : filter_nearest;
 uniform sampler2D shade_tex : filter_nearest;
 // where ground (0, 0) lands in the drawing, pixels per metre, the active radius (m)
 uniform float tol;
+uniform float walk_tol;
 """ + Pal.shader_consts() + """
 varying vec2 lp;
 int pal_at(int x, int row) {
@@ -869,7 +1001,12 @@ void vertex() {
 	lp = VERTEX;
 }
 void fragment() {
-	vec4 t = texelFetch(atlas, ivec2(floor(UV)), 0);
+	// COLOR.b: 1 = faded beyond the radius, 2 = a walker (its own atlas and tolerance)
+	int flags = int(round(COLOR.b * 255.0));
+	bool walker = (flags & 2) != 0;
+	vec4 t;
+	if (walker) t = texelFetch(walk_atlas, ivec2(floor(UV)), 0);
+	else t = texelFetch(atlas, ivec2(floor(UV)), 0);
 	if (t.a < 0.5) discard;
 	ivec2 size = textureSize(depth_tex, 0);
 	ivec2 p = clamp(ivec2(floor(lp)), ivec2(0), size - 1);
@@ -877,12 +1014,12 @@ void fragment() {
 	float occ = round(d.r * 255.0) + round(d.g * 255.0) * 256.0;
 	float mine = round(COLOR.r * 255.0) + round(COLOR.g * 255.0) * 256.0;
 	// something stands nearer than the car here
-	if (occ > 0.5 && occ > mine + tol) discard;
+	if (occ > 0.5 && occ > mine + (walker ? walk_tol : tol)) discard;
 	int idx = int(round(t.r * 255.0));
 	if (idx != INK) {
-		// faded beyond the radius (COLOR.b, per car); darker where the ground just under this
-		// pixel lies in a cast shadow
-		if (COLOR.b > 0.5) idx = pal_at(idx, 3);
+		// faded beyond the radius (per sprite); darker where the ground just under this pixel
+		// lies in a cast shadow
+		if ((flags & 1) != 0) idx = pal_at(idx, 3);
 		if (texelFetch(shade_tex, clamp(p + ivec2(0, 1), ivec2(0), size - 1), 0).r > 0.5)
 			idx = pal_at(idx, 1);
 	}
@@ -896,4 +1033,5 @@ void fragment() {
 	m.set_shader_parameter("shade_tex", view.shade_tex)
 	_active = active_radius + 2.0 if active_radius > 0.0 else 1.0e9
 	m.set_shader_parameter("tol", HIDE_TOL * BlockView.DEPTH_K)
+	m.set_shader_parameter("walk_tol", WALK_TOL * BlockView.DEPTH_K)
 	return m
