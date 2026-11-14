@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cr1plewj0tqgd"
-path="res://.godot/imported/11_office_tokyo.png-1671048e3e59c43bc1c6c352f18dfff6.ctex"
+uid="uid://f7ic6o14u3eb"
+path="res://.godot/imported/13_office_tokyo.png-210afeacf0b0ea0ffb15def5a3fa1116.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://docs/screenshots/11_office_tokyo.png"
-dest_files=["res://.godot/imported/11_office_tokyo.png-1671048e3e59c43bc1c6c352f18dfff6.ctex"]
+source_file="res://docs/screenshots/13_office_tokyo.png"
+dest_files=["res://.godot/imported/13_office_tokyo.png-210afeacf0b0ea0ffb15def5a3fa1116.ctex"]
 
 [params]
 
