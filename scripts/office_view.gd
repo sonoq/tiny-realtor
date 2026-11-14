@@ -192,8 +192,10 @@ func _pan_to(at: Vector2) -> void:
 
 
 func press(at: Vector2) -> bool:
-	_press_ui = _play.press(at) or _play.over_ui(at)
-	return _play.press(at) or Ui.BACK_RECT.has_point(at)
+	# once: a minigame acts on the press
+	var own := _play.press(at)
+	_press_ui = own or _play.over_ui(at)
+	return own or Ui.BACK_RECT.has_point(at)
 
 
 func click(at: Vector2) -> void:
@@ -364,15 +366,17 @@ func lots_by_distance() -> Array[int]:
 	return out
 
 
-func drag(_at: Vector2, rel: Vector2) -> void:
-	if not _play.blocks_map() and not _press_ui:
+func drag(at: Vector2, rel: Vector2) -> void:
+	if _play.blocks_map():
+		_play.drag(at)
+	elif not _press_ui:
 		pan_by(rel)
 
 
 func hover(at: Vector2) -> void:
 	hot = at
 	_play.hover(at)
-	_hover = -1 if _play.blocks_map() or on_mark(at) else lot_under(at)
+	_hover = -1 if _play.blocks_map() or on_mark(at) or _play.over_ui(at) else lot_under(at)
 	_over.queue_redraw()
 
 

@@ -14,7 +14,8 @@ extends RefCounted
 
 const FORMAT := "tiny-realtor-save"
 # 2: the office has no lot of its own any more (v1 saves are migrated on load, see _sanitize)
-const VERSION := 2
+# 3: events and their timed effects (Events; a v2 save starts them fresh)
+const VERSION := 3
 const AWAY_GAP := 120.0
 # money and debt move in steps no longer than this while a loan runs (interest, autopay)
 const BANK_STEP := 60.0
@@ -36,6 +37,9 @@ var away: Dictionary = {}
 var news: Array[String] = []
 # works the office's builder started on its own since the screen last looked: {"office", "lot"}
 var auto_started: Array[Dictionary] = []
+# the time the rent is being paid for (a VIP tenant pays double only before its end): the start
+# of the piece advance() is paying, else the time paid up to
+var _rent_t := 0.0
 
 
 func _init(save_path: String = "") -> void:
@@ -67,7 +71,8 @@ func fresh(t: float) -> void:
 	state = {"format": FORMAT, "version": VERSION, "money": Economy.START_MONEY, "seen": t,
 		"created": t, "last_office": "", "autopay": 0.10, "loans": {}, "offices": {},
 		"stats": {"earned": 0.0, "interest": 0.0, "fees": 0.0, "repaid": 0.0, "built": 0,
-			"bought": 0}}
+			"bought": 0}, "events": Events.fresh(t)}
+	_rent_t = t
 
 
 # reads the save, or the temp file of an interrupted write, or the last good backup; when a
@@ -167,6 +172,8 @@ func _sanitize(t: float) -> void:
 				l.erase("start")
 			elif l.has("to"):
 				l["to"] = mini(int(l["to"]), 5)
+	Events.sanitize(self, t)
+	_rent_t = seen
 
 
 static func _num_ok(v: Variant) -> bool:
@@ -298,7 +305,10 @@ func cut(id: String, kind: String) -> float:
 
 
 func lot_rent(id: String, l: Dictionary) -> float:
-	return Economy.RENT[int(l["t"])] * float(l["k"]) * (1.0 + Economy.trait_of(manager(id), "rent"))
+	# a VIP tenant (an event) pays more until its time is up
+	var x := float(l["vx"]) if l.has("vip") and float(l["vip"]) > _rent_t else 1.0
+	return Economy.RENT[int(l["t"])] * float(l["k"]) * (1.0 + Economy.trait_of(manager(id),
+		"rent")) * x
 
 
 # the office's own income per minute (its commissions, by level), with the manager's rent bonus
@@ -361,15 +371,22 @@ func advance(t: float) -> Array[Dictionary]:
 				var l: Dictionary = lots[lid]
 				if l.has("end"):
 					nxt = minf(nxt, maxf(float(l["end"]), cur))
+				# a VIP tenant leaving changes the rent too
+				if l.has("vip"):
+					nxt = minf(nxt, maxf(float(l["vip"]), cur))
 		if builder:
 			nxt = minf(nxt, cur + AUTO_STEP)
 		if cur < paid_until:
+			_rent_t = cur
 			_flow(cur, minf(nxt, paid_until))
 		cur = nxt
 		for id: String in offices():
 			var lots: Dictionary = office(id)["lots"]
 			for lid: String in lots:
 				var l: Dictionary = lots[lid]
+				if l.has("vip") and float(l["vip"]) <= cur:
+					l.erase("vip")
+					l.erase("vx")
 				if l.has("end") and float(l["end"]) <= cur:
 					l["t"] = int(l["to"])
 					l.erase("to")
@@ -383,6 +400,7 @@ func advance(t: float) -> Array[Dictionary]:
 		if cur >= t:
 			break
 	state["seen"] = t
+	_rent_t = t
 	if is_away:
 		var gone := {"seconds": gap, "paid_s": paid_until - seen,
 			"money": float(state["stats"].get("earned", 0.0)) - e0,
@@ -636,7 +654,7 @@ func payoff_minutes(share: float, extra_debt: float = 0.0, extra_rate_h: float =
 
 func buy_price(id: String, info: Dictionary) -> float:
 	return Economy.buy_price(info, int(info["base_tier"])) * plusvalia(id) \
-		* (1.0 - cut(id, "land"))
+		* (1.0 - cut(id, "land")) * (1.0 - Events.sale_cut(self, id, info["id"]))
 
 
 # what owning part of the neighbourhood does to the price of the rest
@@ -664,6 +682,7 @@ func buy(id: String, info: Dictionary) -> String:
 	office(id)["lots"][info["id"]] = {"t": int(info["base_tier"]), "k": float(info["rent_k"]),
 		"pk": float(info["price_k"]), "mx": int(info["max_tier"])}
 	state["stats"]["bought"] = int(state["stats"].get("bought", 0)) + 1
+	Events.on_bought(self, id, info["id"])
 	return ""
 
 
@@ -739,7 +758,8 @@ func can_build(id: String, lot_id: String, to: int = -1) -> String:
 	return ""
 
 
-# starts works on a lot up to tier `to` (one tier up by default), paid now (or at `at`)
+# starts works on a lot up to tier `to` (one tier up by default), paid now (or at `at`, the
+# builder's: an exprés from an event is only for works the player starts)
 func build(id: String, lot_id: String, to: int = -1, at: float = -1.0) -> String:
 	var why := can_build(id, lot_id, to)
 	if why != "":
@@ -753,7 +773,10 @@ func build(id: String, lot_id: String, to: int = -1, at: float = -1.0) -> String
 	var t := now() if at < 0.0 else at
 	l["to"] = to
 	l["start"] = t
-	l["end"] = t + build_time(id, int(l["t"]), to)
+	var secs := build_time(id, int(l["t"]), to)
+	if at < 0.0:
+		secs = Events.take_express(self, id, secs, t)
+	l["end"] = t + secs
 	return ""
 
 

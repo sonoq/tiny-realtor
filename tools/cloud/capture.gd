@@ -13,7 +13,12 @@ extends SceneTree
 # group zoomed into -> city -> office, then back -> city map -> back -> the world centred on
 # Valencia), the whole world with the four offices' pins, Europe at x8, a city pointed at, Spain at
 # x16, the list a city with an office opens (its office row opens the office), Tokyo, the city list
-# and back, and the 200 px window. It needs a real display (run it under xvfb-run, see
+# and back, and the 200 px window. Last the events (`8N_event_*`, `8N_job_*`), made to order in the
+# first office: a flash sale's banner and the lot it points to, each tenant job at its start,
+# mid-play and its result, the wires solved frame by frame (`events_gif/NNN.png`, for a GIF), a
+# VIP tenant's star and the 200 px window with a banner; the events never come on their own during
+# the capture (Events.auto off), so the other shots stay as they were. It needs a real display
+# (run it under xvfb-run, see
 # tools/cloud/screenshot.sh), because a headless run renders nothing a viewport could hand back.
 #
 #   godot --path . --rendering-driver opengl3 --audio-driver Dummy \
@@ -55,6 +60,8 @@ func _init() -> void:
 				_spots = []
 			_spots.append({"city": p[0], "lat": float(p[1]), "lon": float(p[2]), "tag": p[0]})
 	DirAccess.make_dir_recursive_absolute(_out)
+	# events come only when this capture asks for them
+	Events.auto = false
 	_wipe(Store.OFFICES)
 	for save in ["user://save.json", "user://save_fixture.json"]:
 		for ext in ["", ".tmp", ".bak"]:
@@ -154,6 +161,8 @@ func _init() -> void:
 		return
 	n += 1
 	if not await _world(n):
+		return
+	if not await _events():
 		return
 	print("DONE %d shots -> %s" % [_shots, ProjectSettings.globalize_path(_out)])
 	for o in Store.offices():
@@ -502,6 +511,237 @@ func _world(n: int) -> bool:
 		_fail("Esc on the world map should quit, not stay")
 		return false
 	return true
+
+
+# the events in the first office (see the top): a young game made to order, events spawned by
+# hand, the jobs played through the real input path with their clocks stepped by hand
+func _events() -> bool:
+	var n := 80
+	var g := _app.game
+	var meta: Dictionary = Store.offices()[0]
+	var id: String = meta["id"]
+	var block: Variant = Store.read_json(Store.office_path(id))
+	if not block is Dictionary:
+		_fail("cannot read the first office for the events")
+		return false
+	var own: String = block.get("office_plot", "")
+	# a young game: level 1, the office's own solar built with houses, a little cash
+	g.state["offices"] = {}
+	g.state["loans"] = {}
+	g.state["events"] = Events.fresh(float(g.state["seen"]))
+	g.add_office(id, own, Economy.lot_infos(block))
+	if own != "":
+		g.lot(id, own)["t"] = 1
+	g.state["money"] = 20000.0
+	g.away = {}
+	g.save()
+	_app.open_office(meta)
+	if not await _wait_for("OfficeView"):
+		return false
+	var view := _app.screen as OfficeView
+	if not await _wait_drawn(view):
+		return false
+	var play := view.play()
+	view.set_zoom_step(1)
+	g.away = {}
+	await _frames(3)
+	Events.of(g)["budget"] = Economy.EVENT_HOUR_CAP
+	# a flash sale on a solar, at least 40 % off: its banner, then the lot it points to
+	var ev := {}
+	for _k in 60:
+		ev = Events.spawn(g, id, play.infos, "sale")
+		if ev.is_empty():
+			break
+		var i: int = play.index[ev["lot"]]
+		if int(play.infos[i]["base_tier"]) == 0 and float(ev["cut"]) >= 0.4:
+			break
+		Events.dismiss(g, id)
+		ev = {}
+	if ev.is_empty():
+		_fail("no flash sale on a solar to show")
+		return false
+	var lot: int = play.index[ev["lot"]]
+	view.focus_lot(lot)
+	view.pan_by(Vector2(0, 40))
+	view.hover(Vector2(300, 420))
+	await _wait_s(EventUi.GRACE_S + 0.2)
+	await _shot("%02d_event_sale_banner" % n)
+	n += 1
+	view.click(EventUi.BANNER.position + Vector2(120, 28))
+	if view.picked() != lot:
+		_fail("the sale's banner did not open its lot")
+		return false
+	view.hover(Vector2(300, 200))
+	await _shot("%02d_event_sale_lot" % n)
+	n += 1
+	view.select(-1)
+	Events.dismiss(g, id)
+	# the three tenant jobs
+	for kind: String in Economy.JOB_GAMES:
+		ev = {}
+		for _k in 60:
+			ev = Events.spawn(g, id, play.infos, "job")
+			if ev.is_empty() or ev["game"] == kind:
+				break
+			Events.dismiss(g, id)
+			ev = {}
+		if ev.is_empty():
+			_fail("no %s job to show" % kind)
+			return false
+		view.hover(Vector2(300, 420))
+		await _wait_s(EventUi.GRACE_S + 0.2)
+		if kind == "plunge":
+			await _shot("%02d_event_job_banner" % n)
+			n += 1
+		view.click(EventUi.BTN.get_center())
+		var panel := play._panel as JobPanel
+		if panel == null:
+			_fail("the job's banner did not open the job")
+			return false
+		panel.paused = true
+		view.hover(Vector2(300, 300))
+		await _shot("%02d_job_%s_intro" % [n, kind])
+		n += 1
+		view.click(JobPanel.GO_BTN.get_center())
+		panel.run(JobPanel.READY_S + 0.01)
+		match kind:
+			"plunge":
+				n = await _job_plunge(view, panel, n)
+			"wires":
+				n = await _job_wires(view, panel, n)
+			"bulbs":
+				n = await _job_bulbs(view, panel, n)
+		if panel.page != JobPanel.DONE:
+			_fail("the %s job never ended" % kind)
+			return false
+		view.hover(JobPanel.OK_BTN.get_center())
+		await _shot("%02d_job_%s_done" % [n, kind])
+		n += 1
+		view.click(JobPanel.OK_BTN.get_center())
+		if play.panel_kind() != "":
+			_fail("the job's result did not close")
+			return false
+		print("JOB %s score %.2f paid %s" % [kind, panel.job.score(), Economy.money(panel.paid)])
+	# a VIP tenant taken: the star over his building; then the 200 px window with a banner
+	ev = Events.spawn(g, id, play.infos, "vip")
+	if not ev.is_empty():
+		var i: int = play.index[ev["lot"]]
+		view.focus_lot(i)
+		view.pan_by(Vector2(0, 80))
+		await _wait_s(EventUi.GRACE_S + 0.2)
+		view.click(EventUi.BTN.get_center())
+		view.hover(Vector2(300, 420))
+		await _frames(3)
+		await _shot("%02d_event_vip" % n)
+		n += 1
+	ev = Events.spawn(g, id, play.infos, "buyer")
+	view.hover(Vector2(300, 420))
+	await _wait_s(EventUi.GRACE_S + 0.2)
+	var win := get_root()
+	var size := win.size
+	win.size = Vector2i(200, 200)
+	await _frames(4)
+	await _shot("%02d_event_200px" % n)
+	n += 1
+	win.size = size
+	await _frames(2)
+	if not ev.is_empty():
+		view.click(EventUi.BTN.get_center())
+	return true
+
+
+# the plunger through the real input path: a push whenever the marker is well inside the zone
+func _job_plunge(view: OfficeView, panel: JobPanel, n: int) -> int:
+	var p := panel.job as PlungeGame
+	var guard := 0
+	while panel.page == JobPanel.PLAY and guard < 4000:
+		guard += 1
+		panel.run(1.0 / 60.0)
+		var z := p.zone()
+		if not p.over and p.ready_to_push() and p.marker() > z.x + 0.02 and p.marker() < z.y - 0.02:
+			view.press(PlungeGame.PUSH.get_center())
+			if p.good == 3:
+				panel.run(0.15)
+				view.hover(PlungeGame.PUSH.get_center())
+				await _shot("%02d_job_plunge_mid" % n)
+				n += 1
+	return n
+
+
+# the wires, filmed: one into its socket by clicks, then each dragged across, a frame a step
+func _job_wires(view: OfficeView, panel: JobPanel, n: int) -> int:
+	var w := panel.job as WiresGame
+	var gif := _out + "/events_gif"
+	DirAccess.make_dir_recursive_absolute(gif)
+	for f in DirAccess.get_files_at(gif):
+		DirAccess.remove_absolute(gif.path_join(f))
+	var frame := [0]
+	var film := func() -> void:
+		await _frame_to("%s/%03d.png" % [gif, frame[0]])
+		frame[0] += 1
+	view.hover(Vector2(300, 470))
+	for _k in 4:
+		panel.run(1.0 / 15.0)
+		await film.call()
+	for k in WiresGame.N:
+		var from := w.end_rect(0, k).get_center()
+		var to := w.end_rect(1, w.slot_of[k]).get_center()
+		view.press(from)
+		view.hover(from)
+		panel.run(1.0 / 15.0)
+		await film.call()
+		var steps := 7
+		for s in range(1, steps + 1):
+			var at := from.lerp(to, float(s) / steps) + Vector2(0, -40.0 * sin(PI * s / steps))
+			view.hover(at)
+			view.drag(at, Vector2.ZERO)
+			panel.run(1.0 / 15.0)
+			await film.call()
+			# halfway through the second wire: the shot of a wire in hand
+			if k == 1 and s == 4:
+				await _shot("%02d_job_wires_mid" % n)
+				n += 1
+		for _q in 2:
+			panel.run(1.0 / 15.0)
+			await film.call()
+	while panel.page == JobPanel.PLAY:
+		panel.run(1.0 / 15.0)
+		await film.call()
+	for _q in 6:
+		await film.call()
+	print("GIF %d frames -> %s (ffmpeg -framerate 12 -i %s/%%03d.png ...)" % [frame[0], gif, gif])
+	return n
+
+
+# the bulbs: each dark window fixed as it goes out, but the last ones left, so it ends "¡Bien
+# hecho!" rather than perfect
+func _job_bulbs(view: OfficeView, panel: JobPanel, n: int) -> int:
+	var b := panel.job as BulbsGame
+	var shot := false
+	while panel.page == JobPanel.PLAY:
+		panel.run(1.0 / 30.0)
+		if b.over:
+			continue
+		if not shot and b.t >= 1.5 and b.dark() >= 2:
+			view.hover(b.hit(b.state.find(1)).get_center() if b.state.has(1) else Vector2(300, 300))
+			await _shot("%02d_job_bulbs_mid" % n)
+			n += 1
+			shot = true
+		if b.t < 9.5:
+			for k in b.state.size():
+				if b.state[k] == 1 and fmod(b.t, 0.9) < 0.04:
+					view.press(b.hit(k).get_center())
+					break
+	return n
+
+
+# a frame for a film: the window as drawn, without the shot counter or its pause
+func _frame_to(path: String) -> void:
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var img := root.get_texture().get_image()
+	if img != null and not img.is_empty():
+		img.save_png(path)
 
 
 # clicks a city on the world map (opening its list first when it has offices or a group) and
