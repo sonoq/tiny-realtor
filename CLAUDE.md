@@ -2,8 +2,8 @@
 
 An idle real-estate tycoon that lives in a small always-on-top desktop widget, same format as the
 owner's other game Tiny Battlegrounds. You open real-estate offices (oficinas inmobiliarias) in
-real neighbourhoods, buy plots in the streets around them, build on them and earn rent, from empty
-lots to skyscrapers. The streets are REAL data from OpenStreetMap; blocks, plots and buildings are
+real neighbourhoods, buy big lots (terrenos) in the streets around them, build on them and earn
+rent, from empty lots to skyscrapers. The streets are REAL data from OpenStreetMap; blocks, lots and buildings are
 made by the game, drawn as procedural isometric pixel art made with maths.
 
 - Engine: **Godot 4.7.1**, GL Compatibility renderer, GDScript only, no autoloads, no addons.
@@ -29,13 +29,15 @@ Full text, in Spanish, in `docs/DESIGN.md` (it wins over the older `docs/FEASIBI
   radius (500 m) only the streets (names, refs), railways, land-use zones, parks and water from
   the public Overpass API (no own server; polite User-Agent, retry + mirror fallback, "server
   busy" message). No building footprints. The bake derives blocks from the street network and
-  plots along each block's frontage (each plot knows its street and zone); most start as empty
-  lots, a share pre-built with procedural buildings. Saved locally forever, never updated.
+  cuts each block into 1 to ~4 big **lots** ("terrenos", ~2,500-8,000 m2; every lot faces a
+  street and knows its streets and zone): a 500 m area is ~100-150 lots, ~10-15 of them inside
+  the 150 m level-1 radius. A share starts pre-built; a built lot is drawn as a small
+  development of its tier (several buildings). Saved locally forever, never updated.
 - Office level grows the active radius (e.g. 150 m at level 1) inside the downloaded one, so
   levelling never needs the network. Offices are >= 2x max radius + margin apart (~1.5 km), so
   each is a self-contained island; never stitch snapshots taken at different dates.
-- Plots: buy, build, rent per minute (offline too, capped), tiers Solar -> Casa -> Urbanizacion
-  (merge 2-4 plots) -> Bloque de pisos -> Torre -> Rascacielos. Plot size and zone cap
+- Lots: buy, build, rent per minute (offline too, capped), tiers Solar -> Casas -> Urbanizacion
+  -> Bloque de pisos -> Torres -> Rascacielos (each tier fills the whole lot). Lot size and zone cap
   building; rezoning (recalificacion) is a goal. Value modifiers from real data (parks, metro,
   schools, shops, corners, full block). One-click events, prestige ("salir a bolsa"), day/night.
 - Licence: ODbL. "© OpenStreetMap contributors" must stay visible on screen (the HUD reserves it).
@@ -77,8 +79,14 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   Reintentar / Volver.
 - `office_view.gd` (`OfficeView`) - one saved office: shows `BlockView.texture` (drawn once, a
   frame or two after opening; `is_drawn()`) at x1/x2/x3 (x2 = the mockup), with the mockup's HUD:
-  back + neighbourhood, plots owned, level bar with the active/max radius, "+$" pops over owned
-  roofs, street names sheared along their streets in the pixel font.
+  back + neighbourhood, "1 / N tuyas" (lots owned / lots), level bar with the active/max radius,
+  "+$" pops over owned roofs, street names sheared along their streets in the pixel font.
+  Lots are pointed at through BlockView's pick image (`lot_under`): hover = a cyan outline of
+  everything the lot shows (grey when outside the active radius, still selectable), click =
+  `select` (gold outline, slid up out from under the card) and a card (street, zone + tier,
+  m2 / frontage / corner, placeholder price, En venta / Tuyo / Fuera de tu radio, X button).
+  Esc / back closes the card before leaving. A saved v2 area is upgraded to v3 on open
+  (`BlockBaker.upgrade`) and written back.
 
 **Data and rules**
 - `city_db.gd` (`CityDb`) - the shipped cities (id, Spanish name, country, map-box centre).
@@ -111,30 +119,48 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
 - `block_baker.gd` (`BlockBaker`) - the office query and bake (see the format below). **No
   buildings are downloaded**: the streets (with names/refs), railways, land-use zones, parks and
   water within `MAX_RADIUS`. Steps: project, turn so the dominant street direction (length-
-  weighted histogram mod 90 deg) lies on the iso axes, roads/rails/greens/water/sea, then blocks
-  and plots, then the office's plot.
+  weighted histogram mod 90 deg) lies on the iso axes, roads/rails/greens/water/sea, then blocks,
+  then `parcel()`: lots (Plotter.split), each side tested against the street kerbs (`_frontage`:
+  a side whose middle and one more point lie within half the street's width + `PAVEMENT` +
+  `FRONT_TOL` of a street faces it), slivers / thin / street-less blocks become `courts` of kind
+  `garden`, pre-built tiers, then the office's lot. `upgrade()` re-parcels a v2 file from its
+  saved blocks and roads (same result as a fresh bake).
 - `street_graph.gd` (`StreetGraph`) - polygonizes the streets (plus the disc edge): node every
   crossing, weld at 0.5 m, prune dead ends, walk the faces (leave each node by the next way
   clockwise; bounded faces are counter-clockwise). Elevated motorways and trams do not bound
   blocks; other rail lines do.
-- `plotter.gd` (`Plotter`) - parcels one block: a perimeter strip one plot deep (depth and
-  frontage ranges by zone), each side owning the wedge between its corner bisectors, cut across
-  every frontage width; convex corners merge into one corner plot; the middle is the courtyard.
-  Sides lying on the disc edge face no street and get no plots.
-- `block_view.gd` (`BlockView`) - draws a v2 area once, style A, into `texture` (signal
+- `plotter.gd` (`Plotter`) - two cuts. `split()` (bake): a block over `LOT_MAX` (7,600 m2,
+  +-22% per block) is halved by a straight cut across its long side (else its short side, else
+  square to its longest street side), area-balanced 50 +- 8%, recursively; a cut is kept only
+  if every piece is >= `LOT_MIN` and faces >= `FRONT_MIN` m of street. `sites()` (drawing): a lot
+  cut into building sites, a perimeter strip one site deep along its street sides only, each
+  side owning the wedge between its corner bisectors (or running square to a side with no
+  street), cut across every frontage width; convex street corners merge into one corner site.
+- `block_view.gd` (`BlockView`) - draws a v3 area once, style A, into `texture` (signal
   `drawn`): `set_block` builds the ops (AreaBuilder) and sorts them (DepthSort); `_ready` runs
-  three GPU passes in throwaway SubViewports, each read back once: the ground as palette indices
-  + the shadow mask, then the world (ground through WorldShader's ground shader, the slab, the
-  ring, every object in painter's order with its ink outline, price tags). `street_labels()`
-  gives label spots for the overlay; `pops` the roofs income pops rise from.
-- `area_builder.gd` (`AreaBuilder`) - a v2 area -> ops: the ground (pavement, asphalt, pedestrian
-  paving, rails, parks, water, courtyard gardens, lots with fence posts and tufts, gardens with
-  hedges and pools, lane dashes, zebra crossings at junctions), shadows, the earth slab, the
-  dashed gold ring, and the objects: buildings by tier with the mockup's recipes (0 lot + "$"
-  sign, 1 house, 2 estate with pool, 3 apartments, 4 tower, 5 skyscraper with gold crown;
-  industrial = shed), the office (REALTOR sign, teal roof, cyan flag), owned = teal roof + cyan
-  flag, trees (courtyards, parks, street trees), lamps and people inside the active radius,
-  cars in the lanes, price tags on the nearest signed lots. All placement by stable hashes.
+  GPU passes in throwaway SubViewports, each read back once: the ground as palette indices
+  + the shadow mask + the **pick** image, then the world (ground through WorldShader's ground
+  shader, the slab, the ring, every object in painter's order with its ink outline, price tags).
+  The pick pass draws each lot's ground, then each lot's objects (outline included, walls
+  trimmed to the wall) in painter's order, all in the lot's number (`r + g * 256 = lot + 1`):
+  `lot_at(px)` is whatever lot is drawn there, a tower's roof included; `outline(lot)` gives
+  the two pixel rings around it as runs (cached). `lots` = AreaBuilder's per-lot entries.
+  `street_labels()` gives label spots for the overlay; `pops` the roofs income pops rise from.
+- `area_builder.gd` (`AreaBuilder`) - a v3 area -> ops: the ground (pavement, asphalt, pedestrian
+  paving, rails, parks, water, gardens, lane dashes, zebra crossings at junctions), shadows, the
+  earth slab, the dashed gold ring, and each lot as a development of its tier, laid out at draw
+  time from the lot's polygon, `fronts`, tier, levels, zone and owned flag (so a lot can be
+  rebuilt at any tier without touching the file), with the mockup's recipes: 0 dirt lot with
+  fence posts, weed patches, bushes and a "$" sign (in the radius); 1 a row of houses with
+  hedged gardens (`Plotter.sites`, `SITE_DEPTH/FRONT`); 2 bigger houses with pools; 3
+  apartment blocks of mixed heights and facades round a courtyard garden; 4 one to three towers
+  (`_spots`: axis-aligned squares well inside the lot) on a paved plaza; 5 a skyscraper with a
+  gold crown on a podium on a plaza; industrial 1-2 = sheds in a yard. The office's lot is
+  tier-3 blocks with the REALTOR building on the site nearest the clicked point. Owned = teal
+  roofs + cyan flags. Every object records its `lot`; buildings fade per lot (`lots[i].active`
+  = centroid inside the radius). Trees (gardens, parks, street trees), lamps and people inside
+  the active radius, cars, price tags (`price_tag`, `price_of`) on the nearest signed lots. All
+  placement by stable hashes.
 - `painter.gd` (`Painter`) - records one object's ops (POLY, WALL, RECT, TEX) with the mockup's
   primitives: `wall` (wall_pixels), `prism`, `face3d`, `pitched`, Bresenham `line`.
 - `world_shader.gd` (`WorldShader`) - the two shaders, generated with the palette's names: the
@@ -173,21 +199,28 @@ The office view is the mockup's renderer ported to the GPU, pixel for pixel in s
   Colours: VOID/SL0 backdrop checker (76 px), CREAM text, MUTED secondary, GOLD money/level/
   accent buttons, CYAN arrows and hover, BLOOD/RED warnings, MINT reserved for income.
 - Placeholders until there is an economy: price tags = area x `AreaBuilder.PRICE_M2`, "+$" pops
-  without amounts, only the office plot is owned (data's `owned` is honoured).
+  without amounts, only the office lot is owned (data's `owned` is honoured).
 
-## Office area format (`tiny-realestate-block` v2)
+## Office area format (`tiny-realestate-block` v3)
 
 Metres, x east / y north, already turned by `rotation_deg` so streets follow the axes; origin =
-the office. Top level: `format`, `format_version` 2, `source`, `attribution`, `center {lat, lon}`,
+the office. Top level: `format`, `format_version` 3, `source`, `attribution`, `center {lat, lon}`,
 `rotation_deg`, `radius_m`, `seed`, `fetched`, `data_source` (`osm` | `fixture`), `stats`,
-`office_plot` (plot id or ""), `office` (the meta also kept in the index: id, city, name, lat,
+`office_plot` (lot id or ""), `office` (the meta also kept in the index: id, city, name, lat,
 lon, level, max_radius, active_radius, created, source, stats), and the layers:
 `roads[] {name, ref, kind, width, line}`, `rails[] {kind, line}`, `greens[] {kind, poly}`,
 `courts[] {kind, poly}`, `water[] {kind, poly}` (kind `sea` from coastlines), `land[]` (islands),
-`blocks[] {id, zone, poly}`, `plots[] {id, block, poly, street, corner, zone, front_m, area_m2,
-built_tier, levels, owned}`. Zones: residential / commercial / industrial (from landuse, else
-residential). Tiers: 0 solar, 1 casa, 2 urbanizacion, 3 bloque, 4 torre, 5 rascacielos. Every
-polygon is snapped to 10 cm and guaranteed to triangulate.
+`blocks[] {id, zone, poly}`, `plots[]` = the LOTS (terrenos; the name is kept from v2)
+`{id, block, poly, street, streets, corner, fronts, zone, front_m, area_m2, built_tier, levels,
+owned}`: `poly` counter-clockwise; `fronts` (new) = indices i of the sides poly[i] -> poly[i+1]
+that face a street (never empty); `streets` (new) = every street name it faces, most frontage
+first (`street` = the first, "" when unnamed); `front_m` = metres of street frontage; `corner`
+= faces streets at an angle. `courts[]` are now small gardens (`kind` garden: blocks too small,
+thin or street-less for a lot). Optional `upgraded_from` (2) on a file re-parcelled from v2,
+whose `courts` are replaced too. `stats.plots` = `stats.lots` = the lot count. Zones:
+residential / commercial / industrial (from landuse, else residential). Tiers: 0 solar,
+1 casas, 2 urbanizacion, 3 bloque, 4 torres, 5 rascacielos. Every polygon is snapped to 10 cm
+and guaranteed to triangulate.
 
 ## Conventions (same as Tiny Battlegrounds)
 
@@ -208,7 +241,7 @@ polygon is snapped to 10 cm and guaranteed to triangulate.
 bash tools/cloud/setup.sh                         # fresh container: Godot 4.7.1 + apt deps + import
 godot --headless --path . --import                # after adding/renaming files
 godot --headless --path . --quit-after 300        # boots main.tscn for 300 frames
-godot --headless --path . --script res://tools/bake_check.gd   # bakes fixtures, checks polygons
+godot --headless --path . --script res://tools/bake_check.gd   # bakes fixtures, checks lots
 bash tools/cloud/screenshot.sh docs/screenshots --fixture       # the whole flow on test data
 bash tools/cloud/screenshot.sh docs/screenshots --fresh         # the whole flow on real downloads
 godot --headless --path . --script res://tools/net_check.gd     # one small real download
@@ -217,16 +250,21 @@ godot --headless --path . --script res://tools/net_check.gd     # one small real
 `screenshot.sh [outdir] [args]` runs `tools/cloud/capture.gd` under
 `xvfb-run -a -s "-screen 0 1280x1024x24" godot --path . --rendering-driver opengl3 --audio-driver Dummy`
 (mesa llvmpipe), because `--headless` renders nothing. The capture drives the real flow: city
-list, Barcelona map, cursor, confirm, loading, office (x2, x3 close-up, x1 far), the red
+list, Barcelona map, cursor, confirm, loading, office (x2, a hovered lot, a selected lot with
+its card, then Esc must close it; x3 close-up, x1 far), the red
 too-close cursor, offices in Tokyo and Warsaw, then the busy-server screen. Extra args: `--fixture`, `--fresh` (also re-download city maps;
 offices are always wiped first), `--spot=city:lat:lon` (repeatable, replaces the places),
 `--raw-cache=DIR`. Under Xvfb a `WARNING: Could not set V-Sync mode` line is normal.
 
 Other tools: `bake_check.gd -- --raw=/abs/answer.json --lat= --lon= [--city]` bakes a saved raw
-Overpass answer; `seed_cache.gd` files a raw answer under the name `--raw-cache` looks for;
-`tools/cloud/render_office.gd -- --out=/abs/dir [--file=/abs/office.json]` (under xvfb-run like
-the capture) renders saved offices alone (whole drawing + x2 crop) in seconds and fails on any
-pixel off the palette. `docs/screenshots/style_a_side_by_side.png` is the mockup next to the
+Overpass answer (checks: polygons, every lot faces a street, 20..600 lots per 500 m area, an
+office lot); `bake_check.gd -- --upgrade=/abs/office_v2.json` checks the v2 -> v3 upgrade;
+`seed_cache.gd` files a raw answer under the name `--raw-cache` looks for;
+`tools/cloud/render_office.gd -- --out=/abs/dir [--file=/abs/office.json] [--tiers]` (under
+xvfb-run like the capture) renders saved offices alone (whole drawing + x2 crop; v2 files are
+upgraded in memory) in seconds and fails on any pixel off the palette; `--tiers` adds
+`<id>_tiers.png`, lots near the office rebuilt at each tier (+ sheds and the office lot), each
+outlined in gold and labelled (`docs/screenshots/tiers_valencia.png`). `docs/screenshots/style_a_side_by_side.png` is the mockup next to the
 real Barcelona office.
 
 **Network in the cloud container**: Overpass hosts must be on the environment's allowlist. In

@@ -5,8 +5,11 @@ extends Screen
 # or two after opening) and this screen shows it through a sprite, so panning only moves the
 # sprite. Drag to pan, wheel or - + to zoom (each art pixel 1, 2 or 3 screen pixels; 2 is the
 # mockup's). Over it, the HUD of the mockup: back button and the neighbourhood's name, how many
-# plots are yours, the office level with its radius bar, street names along the streets and the
-# OpenStreetMap credit.
+# lots are yours, the office level with its radius bar, street names along the streets and the
+# OpenStreetMap credit. Pointing at a lot outlines everything it shows (BlockView's pick pass:
+# cyan, grey when it is outside the office's radius); clicking it selects it (gold) and opens a
+# card with its street, zone, size, tier and asking price; Esc or the card's X closes the card.
+# A saved v2 area (small plots) is re-parcelled into lots when it is opened, and saved back.
 
 const ZOOMS: Array[int] = [1, 2, 3]
 const START_ZOOM := 1
@@ -22,6 +25,16 @@ const SHEAR_MAX := 1.0
 const POP_EVERY := 2.4
 const POP_LIFE := 1.4
 const POP_RISE := 16.0
+# the selected lot's card, above the level bar, and its close button
+const CARD := Rect2(12, 372, 576, 154)
+const CARD_X := Rect2(528, 380, 52, 52)
+# the map takes pointing only between the header and the level bar
+const MAP_TOP := 110.0
+const MAP_BOTTOM := 530.0
+const TIERS: Array[String] = ["Solar", "Casas", "Urbanización", "Bloque de pisos", "Torres",
+	"Rascacielos"]
+const ZONES := {"residential": "Residencial", "commercial": "Comercial",
+	"industrial": "Industrial"}
 
 var office: Dictionary = {}
 
@@ -33,6 +46,11 @@ var _pan := Vector2.ZERO
 var _stats: Dictionary = {}
 var _street_spots: Array[Dictionary] = []
 var _owned := 1
+var _lot_count := 0
+var _office_lot := ""
+# the lot under the pointer and the selected one, -1 for none
+var _hover := -1
+var _picked := -1
 # zoom step -> labels that fit without overlapping at that zoom
 var _labels := {}
 # income pops: a gold "+$" rising off the roofs the player owns, one after another
@@ -42,19 +60,27 @@ var _pop_t := 0.0
 # false when the saved file is missing or unreadable
 func setup(meta: Dictionary) -> bool:
 	office = meta
-	var block: Variant = Store.read_json(Store.office_path(meta["id"]))
+	var path := Store.office_path(meta["id"])
+	var block: Variant = Store.read_json(path)
 	if not block is Dictionary:
-		push_error("OfficeView: cannot read " + Store.office_path(meta["id"]))
+		push_error("OfficeView: cannot read " + path)
 		return false
+	if int(block.get("format_version", 0)) == 2 and block.has("blocks"):
+		var t0 := Time.get_ticks_msec()
+		block = BlockBaker.upgrade(block)
+		Store.write_json(path, block)
+		print("OfficeView: %s upgraded from v2 to v%d: %d lots in %d ms" % [meta["id"],
+			BlockBaker.VERSION, block["plots"].size(), Time.get_ticks_msec() - t0])
 	_view = BlockView.new()
 	_view.active_radius = float(meta.get("active_radius", Rules.active_radius(1)))
 	if not _view.set_block(block):
 		return false
 	_stats = block.get("stats", {})
 	_owned = 0
-	var mine: String = block.get("office_plot", "")
+	_office_lot = block.get("office_plot", "")
+	_lot_count = block["plots"].size()
 	for p: Dictionary in block["plots"]:
-		if p.get("owned", false) or p["id"] == mine:
+		if p.get("owned", false) or p["id"] == _office_lot:
 			_owned += 1
 	_owned = maxi(_owned, 1)
 	_street_spots = _view.street_labels()
@@ -138,6 +164,57 @@ func click(at: Vector2) -> void:
 		_set_zoom(_zoom_i + 1)
 	elif ZOOM_OUT.has_point(at):
 		_set_zoom(_zoom_i - 1)
+	elif _picked >= 0 and CARD_X.has_point(at):
+		_picked = -1
+	elif _picked >= 0 and CARD.has_point(at):
+		pass
+	else:
+		select(lot_under(at))
+	_over.queue_redraw()
+
+
+# the lot drawn under a canvas point, -1 for none or when the point is on the HUD
+func lot_under(at: Vector2) -> int:
+	if not is_drawn() or at.y < MAP_TOP or at.y > MAP_BOTTOM:
+		return -1
+	if _picked >= 0 and CARD.has_point(at):
+		return -1
+	if at.x > ZOOM_OUT.position.x - 8.0 and at.y < ZOOM_OUT.end.y + 8.0:
+		return -1
+	return _view.lot_at((at - _pan) / _zoom())
+
+
+# selects a lot (-1 clears); a lot hidden under the card is slid up into view
+func select(lot: int) -> void:
+	_picked = lot
+	if lot < 0:
+		return
+	var box: Rect2 = _view.lots[lot]["box"]
+	var mid := _pan + box.get_center() * _zoom()
+	if mid.y > CARD.position.y - 30.0:
+		pan_by(Vector2(0, CARD.position.y - 120.0 - mid.y))
+	_hover = lot_under(hot)
+
+
+func is_card_open() -> bool:
+	return _picked >= 0
+
+
+# the canvas point over a lot's ground middle, for tools that point at lots like a player
+func screen_of_lot(lot: int) -> Vector2:
+	var poly: PackedVector2Array = _view.lots[lot]["poly"]
+	return _pan + _view.project(Iso.centroid(poly)) * _zoom()
+
+
+# lots by distance from the office, for tools
+func lots_by_distance() -> Array[int]:
+	var out: Array[int] = []
+	for i in _view.lots.size():
+		out.append(i)
+	out.sort_custom(func(a: int, b: int) -> bool:
+		return Iso.centroid(_view.lots[a]["poly"]).length() \
+			< Iso.centroid(_view.lots[b]["poly"]).length())
+	return out
 
 
 func drag(_at: Vector2, rel: Vector2) -> void:
@@ -146,6 +223,7 @@ func drag(_at: Vector2, rel: Vector2) -> void:
 
 func hover(at: Vector2) -> void:
 	hot = at
+	_hover = lot_under(at)
 	_over.queue_redraw()
 
 
@@ -154,6 +232,10 @@ func wheel(_at: Vector2, steps: int) -> void:
 
 
 func back() -> bool:
+	if _picked >= 0:
+		_picked = -1
+		_over.queue_redraw()
+		return true
 	app.open_city(office["city"])
 	return true
 
@@ -215,12 +297,12 @@ func _draw_over() -> void:
 		# at x1 the art is half size and the names would bury it
 		if _zoom_i > 0:
 			_draw_streets()
+		_draw_outlines()
 		_draw_pops()
 	var city := CityDb.get_city(office["city"])
 	Ui.header(_over, office.get("name", "Oficina"), true, hot)
-	var plots := int(_stats.get("plots", 0))
 	Ui.text(_over, Vector2(Ui.BACK_RECT.end.x + Ui.HEAD_GAP, 98), "%s · %d / %s tuyas" % [
-		city.get("name", ""), _owned, Ui.count(plots)], Ui.TEXT, Ui.MUTED)
+		city.get("name", ""), _owned, Ui.count(_lot_count)], Ui.TEXT, Ui.MUTED)
 	Ui.arrow(_over, ZOOM_OUT, "-", hot, _zoom_i == 0)
 	Ui.arrow(_over, ZOOM_IN, "+", hot, _zoom_i == ZOOMS.size() - 1)
 	# the office level and how much of the downloaded disc its radius covers
@@ -232,7 +314,81 @@ func _draw_over() -> void:
 	Ui.text_right(_over, Vector2(LEVEL_BAR.end.x, LEVEL_BAR.position.y - 10),
 		"Radio %d / %d m" % [active, full], Ui.TEXT, Ui.MUTED)
 	Ui.bar(_over, LEVEL_BAR, float(active) / maxf(1.0, full))
+	if _picked >= 0:
+		_draw_card()
 	Ui.footer(_over, "")
+
+
+# the pointed-at lot in cyan (grey when out of reach), the selected one in gold, each ringed in
+# ink so it reads on any ground
+func _draw_outlines() -> void:
+	if _hover >= 0 and _hover != _picked:
+		var free: bool = _view.lots[_hover]["active"]
+		_draw_ring(_hover, Ui.CYAN if free else Ui.MUTED)
+	if _picked >= 0:
+		_draw_ring(_picked, Ui.GOLD)
+
+
+func _draw_ring(lot: int, color: Color) -> void:
+	var rings := _view.outline(lot)
+	var z := _zoom()
+	for k in 2:
+		var ink := color if k == 0 else Ui.VOID
+		for r: Rect2 in rings[k]:
+			_over.draw_rect(Rect2(_pan + r.position * z, r.size * z), ink)
+
+
+# the selected lot's card: its address, zone and tier, size, and asking price or who has it
+func _draw_card() -> void:
+	var lot: Dictionary = _view.lots[_picked]
+	var data: Dictionary = lot["data"]
+	var mine: bool = data["id"] == _office_lot
+	var owned: bool = mine or data.get("owned", false)
+	Ui.panel(_over, CARD, Ui.GOLD)
+	var x := CARD.position.x + 18.0
+	var y := CARD.position.y + 36.0
+	var room := CARD_X.position.x - x - 8.0
+	var street: String = data.get("street", "")
+	_fit_text(Vector2(x, y), street if street != "" else "Calle sin nombre", room, Ui.CREAM)
+	var tier := clampi(int(data.get("built_tier", 0)), 0, TIERS.size() - 1)
+	var kind: String = TIERS[tier]
+	if data["zone"] == "industrial" and tier in [1, 2]:
+		kind = "Naves"
+	if mine:
+		kind = "Tu oficina"
+	var line2 := "%s · %s" % [ZONES.get(data["zone"], data["zone"]), kind]
+	_fit_text(Vector2(x, y + 32.0), line2, room, Ui.MUTED)
+	var line3 := "%s m2 · %d m de fachada" % [Ui.count(int(data.get("area_m2", 0))),
+		roundi(float(data.get("front_m", 0.0)))]
+	if data.get("corner", false):
+		line3 += " · esquina"
+	_fit_text(Vector2(x, y + 64.0), line3, CARD.end.x - x - 18.0, Ui.MUTED)
+	var price := AreaBuilder.price_of(float(data.get("area_m2", 0)))
+	Ui.coin(_over, Vector2(x, y + 84.0))
+	Ui.text(_over, Vector2(x + 22.0, y + 98.0), "$" + Ui.count(price), Ui.TEXT, Ui.GOLD)
+	var state := "En venta"
+	var tone := Ui.GOLD
+	if owned:
+		state = "Tuyo"
+		tone = Ui.CYAN
+	elif not lot["active"]:
+		state = "Fuera de tu radio"
+		tone = Ui.BLOOD
+	Ui.text_right(_over, Vector2(CARD.end.x - 18.0, y + 98.0), state, Ui.TEXT, tone)
+	Ui.button(_over, CARD_X, "X", hot)
+
+
+# one line of card text, narrowed and then cut short with an ellipsis to fit `room`
+func _fit_text(at: Vector2, s: String, room: float, color: Color) -> void:
+	var kind := Ui.BOLD
+	if Ui.text_width(s, Ui.TEXT, kind) > room:
+		kind = Ui.NARROW
+	var line := s
+	var cut := s.length()
+	while cut > 3 and Ui.text_width(line, Ui.TEXT, kind) > room:
+		cut -= 1
+		line = s.left(cut).strip_edges() + "…"
+	Ui.text(_over, at, line, Ui.TEXT, color, kind)
 
 
 func _draw_pops() -> void:

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d0ka51cdx4swl"
-path="res://.godot/imported/13_office_warszawa.png-d04017da81b14dc9be6add046eb513ee.ctex"
+uid="uid://biy4p2oke21oc"
+path="res://.godot/imported/valencia_hover.png-fd49dfa114032e49049d71927e1b9aa2.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://docs/screenshots/13_office_warszawa.png"
-dest_files=["res://.godot/imported/13_office_warszawa.png-d04017da81b14dc9be6add046eb513ee.ctex"]
+source_file="res://docs/screenshots/valencia_hover.png"
+dest_files=["res://.godot/imported/valencia_hover.png-fd49dfa114032e49049d71927e1b9aa2.ctex"]
 
 [params]
 

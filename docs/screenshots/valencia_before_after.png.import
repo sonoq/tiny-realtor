@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bbqtys1cae63e"
-path="res://.godot/imported/14_server_busy.png-dcffc791d5edf7328d1764b84c0b60b2.ctex"
+uid="uid://dgh1ksb00j2x4"
+path="res://.godot/imported/valencia_before_after.png-985d8894c98ac89ec94192df2c8a660d.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://docs/screenshots/14_server_busy.png"
-dest_files=["res://.godot/imported/14_server_busy.png-dcffc791d5edf7328d1764b84c0b60b2.ctex"]
+source_file="res://docs/screenshots/valencia_before_after.png"
+dest_files=["res://.godot/imported/valencia_before_after.png-985d8894c98ac89ec94192df2c8a660d.ctex"]
 
 [params]
 

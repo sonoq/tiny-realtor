@@ -2,8 +2,8 @@ extends SceneTree
 
 # Boots the real game (res://main.tscn) and drives the whole map flow like a player, saving a PNG
 # at each step: the city list, Barcelona's map, the office cursor, the confirm box, the download,
-# the office view; a second office in Tokyo and a third in Warsaw; and the red "too close"
-# cursor; then the busy-server screen. It needs a real display (run it under xvfb-run, see tools/cloud/screenshot.sh), because
+# the office view, pointing at a lot and selecting another (its card); a second office in Tokyo
+# and a third in Warsaw; and the red "too close" cursor; then the busy-server screen. It needs a real display (run it under xvfb-run, see tools/cloud/screenshot.sh), because
 # a headless run renders nothing a viewport could hand back.
 #
 #   godot --path . --rendering-driver opengl3 --audio-driver Dummy \
@@ -90,6 +90,8 @@ func _init() -> void:
 		await _frames(2)
 		await _shot("%02d_office_%s" % [n, spot["tag"]])
 		n += 1
+		if spot == _spots[0]:
+			n = await _lots(view, spot["tag"], n)
 		if spot["tag"] == "barcelona":
 			view.set_zoom_step(2)
 			await _frames(2)
@@ -119,6 +121,33 @@ func _init() -> void:
 	for o in Store.offices():
 		print("STATS %s %s" % [o["id"], JSON.stringify(o.get("stats", {}))])
 	quit(0)
+
+
+# points at a lot near the office, then clicks another one and shoots its card; Esc (back) must
+# close the card before it leaves the office
+func _lots(view: OfficeView, tag: String, n: int) -> int:
+	var spots: Array[Vector2] = []
+	for lot in view.lots_by_distance():
+		var at := view.screen_of_lot(lot)
+		if at.x > 60 and at.x < 540 and at.y > OfficeView.MAP_TOP + 40 \
+				and at.y < OfficeView.MAP_BOTTOM - 30 and view.lot_under(at) == lot:
+			spots.append(at)
+		if spots.size() >= 3:
+			break
+	if spots.size() < 3:
+		_fail("no lots to point at near the office")
+		return n
+	view.hover(spots[1])
+	await _shot("%02d_office_%s_hover" % [n, tag])
+	n += 1
+	view.click(spots[2])
+	view.hover(spots[2])
+	await _shot("%02d_office_%s_lot" % [n, tag])
+	n += 1
+	if not view.back() or view.is_card_open():
+		_fail("Esc did not close the lot card")
+	view.hover(Vector2(-100, -100))
+	return n
 
 
 # waits until the app shows a screen of this class; false (and quits) on a failure or timeout
