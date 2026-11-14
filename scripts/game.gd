@@ -443,9 +443,17 @@ func worth() -> float:
 	for id: String in offices():
 		for lid: String in office(id)["lots"]:
 			var l: Dictionary = office(id)["lots"][lid]
-			if not l.get("office", false):
-				sum += Economy.worth(float(l.get("pk", 1.0)) * inflation(id), int(l["t"]))
+			# the office's own lot is property too: a block of flats
+			sum += Economy.worth(float(l.get("pk", 1.0)) * inflation(id), int(l["t"]))
 	return sum
+
+
+# true when a loan's room is held down by what your lots are worth (the mortgage), not by rent
+func loan_by_worth(kind: String) -> bool:
+	var def := Economy.loan_def(kind)
+	if def.is_empty() or float(def["assets"]) <= 0.0:
+		return false
+	return worth() * float(def["assets"]) < float(def["minutes"]) * income()
 
 
 # the most a new loan of this kind may be: its own size limit, minus what it already owes, and

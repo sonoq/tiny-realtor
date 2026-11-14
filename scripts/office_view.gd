@@ -13,6 +13,8 @@ extends Screen
 # The game itself (money, cards with buy / build buttons, markers, the bank and the manager) is
 # OfficePlay, a layer drawn over this one that gets every input first; the lots are drawn as the
 # game has them (Game.apply) and one lot is redrawn when it changes (BlockView.redraw_lot).
+# Traffic drives cars over the drawing, as a child of its sprite; it hides them behind whatever
+# the drawing's depth pass holds, which lot redraws keep up to date, and follows a level-up.
 
 const ZOOMS: Array[int] = [1, 2, 3]
 const START_ZOOM := 1
@@ -61,6 +63,9 @@ var _hover := -1
 var _picked := -1
 # zoom step -> labels that fit without overlapping at that zoom
 var _labels := {}
+var _traffic: Traffic
+# the traffic is paused under a panel
+var _paused := false
 
 
 # false when the saved file is missing or unreadable
@@ -98,6 +103,8 @@ func setup(meta: Dictionary) -> bool:
 	_street_spots = _view.street_labels()
 	_play = OfficePlay.new()
 	_play.setup(self, game, id, block)
+	_traffic = Traffic.new()
+	_traffic.setup(block, _view.focus, meta["id"])
 	return true
 
 
@@ -110,6 +117,7 @@ func _ready() -> void:
 	_sprite = Sprite2D.new()
 	_sprite.centered = false
 	add_child(_sprite)
+	_sprite.add_child(_traffic)
 	_over = Node2D.new()
 	_over.draw.connect(_draw_over)
 	add_child(_over)
@@ -119,8 +127,19 @@ func _ready() -> void:
 	_set_zoom(_zoom_i)
 
 
+# a full-window panel (bank, manager) hides the map: the cars wait under it and drive on when
+# it closes
+func _process(_delta: float) -> void:
+	var hidden := _play.panel_kind() != ""
+	if hidden != _paused:
+		_paused = hidden
+		_traffic.frozen = hidden
+		_traffic.visible = not hidden
+
+
 func _on_drawn() -> void:
 	_sprite.texture = _view.texture
+	_traffic.attach(_view, _view.active_radius)
 	print("OfficeView: %s drawn %dx%d, build %d ms, gpu %d ms" % [office.get("id", ""),
 		roundi(_view.size.x), roundi(_view.size.y), _view.build_ms, _view.draw_ms])
 	_over.queue_redraw()
@@ -160,6 +179,7 @@ func _pan_to(at: Vector2) -> void:
 	_pan = at.clamp(view.position + view.size * 0.6 - size, view.position + view.size * 0.4)
 	_pan = (_pan / _zoom()).round() * _zoom()
 	_sprite.position = _pan
+	_traffic.set_view(Rect2(-_pan / _zoom(), Ui.CANVAS / _zoom()))
 	_over.queue_redraw()
 	if _play != null:
 		_play.queue_redraw()
@@ -260,6 +280,8 @@ func relevel(radius: float) -> void:
 		_view = nv
 		_next_view = null
 		_sprite.texture = nv.texture
+		# the cars now hide behind the new drawing and fade outside the new radius
+		_traffic.attach(nv, radius)
 		_outline_cache_clear()
 		old.queue_free()
 		for i in _late:

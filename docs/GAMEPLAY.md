@@ -100,7 +100,7 @@ Para ir más rápido, nunca para hundirte. Reglas fijas de Oscar:
   |---|---|---|---|
   | Rápido | 1 % | 3 %/h | 30 min de alquiler |
   | Normal | 3 % | 1,2 %/h | 3 h de alquiler |
-  | Hipoteca | 5 % | 0,35 %/h | 15 h de alquiler, y no más del 50 % de lo que valen tus terrenos |
+  | Hipoteca | 5 % | 0,35 %/h | 15 h de alquiler, y no más del 50 % de lo que valen tus terrenos (tu oficina cuenta); la fila lo dice cuando eso es lo que la limita |
 
 - **Nunca te ahoga**:
   - El interés se suma a la deuda; **nunca sale de tu caja**. Tu dinero solo puede subir.

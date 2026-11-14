@@ -167,6 +167,9 @@ func _draw_loan(c: CanvasItem, k: int) -> void:
 	var owed := game.loan_debt(kind)
 	var room := game.loan_room(kind)
 	var what := "Hasta " + Economy.money(room)
+	# the mortgage grows with what your lots are worth: say so, rather than show a tiny cap
+	if game.loan_by_worth(kind) and room >= Economy.LOAN_MIN:
+		what += " (50% de tus terrenos)"
 	var tone := Ui.CREAM
 	if owed > 0.0:
 		what = "Debes " + Economy.money(owed)

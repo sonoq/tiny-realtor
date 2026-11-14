@@ -210,9 +210,7 @@ static func bake(raw: Dictionary, lat0: float, lon0: float, radius: float) -> Di
 		"attribution": "© OpenStreetMap contributors (ODbL)",
 		"center": {"lat": lat0, "lon": lon0}, "rotation_deg": snappedf(rot, 0.01),
 		"radius_m": radius, "seed": absi(("%f%f" % [lat0, lon0]).hash()),
-		"roads": roads.map(func(r: Dictionary) -> Dictionary:
-			return {"name": r["name"], "ref": r["ref"], "kind": r["kind"], "width": r["width"],
-				"line": _ring(r["line"])}),
+		"roads": roads.map(_road_out),
 		"rails": rails.map(func(r: Dictionary) -> Dictionary:
 			return {"kind": r["kind"], "line": _ring(r["line"])}),
 		"greens": greens.map(_area_out), "courts": courts.map(_area_out),
@@ -299,15 +297,39 @@ static func _add_road(roads: Array[Dictionary], graph: StreetGraph, tags: Dictio
 	var ref: String = tags.get("ref", "")
 	if not CityBaker.is_latin(ref):
 		ref = ""
+	# one-way streets (Traffic drives them one way): 1 along the line, -1 against it
+	var ow: String = tags.get("oneway", "")
+	var oneway := 0
+	if ow in ["yes", "true", "1"] or tags.get("junction", "") in ["roundabout", "circular"] \
+			or (raw_kind in ["motorway", "motorway_link"] and ow != "no"):
+		oneway = 1
+	elif ow in ["-1", "reverse"]:
+		oneway = -1
 	for piece in _cut_line(line, disc, radius):
-		roads.append({"name": name, "ref": ref, "kind": kind, "width": width, "line": piece,
-			"major": kind in MAJOR})
+		var road := {"name": name, "ref": ref, "kind": kind, "width": width, "line": piece,
+			"major": kind in MAJOR}
+		if oneway != 0:
+			road["oneway"] = oneway if _same_way(piece, line) else -oneway
+		roads.append(road)
 	# an expressway on a viaduct passes over the blocks instead of bounding them
 	var raised: bool = (tags.get("bridge", "no") != "no" or _number(tags.get("layer", "0")) > 0.0) \
 		and kind in ["motorway", "trunk"]
 	if not raised:
 		for piece in _cut_line(line, wide, radius + 4.0):
 			graph.add_line(piece, width)
+
+
+# whether a piece cut out of a line still runs the line's way (clipping may turn it round)
+static func _same_way(piece: PackedVector2Array, line: PackedVector2Array) -> bool:
+	var m := (piece[0] + piece[1]) * 0.5
+	var best := INF
+	var along := Vector2.ZERO
+	for i in line.size() - 1:
+		var q := Geometry2D.get_closest_point_to_segment(m, line[i], line[i + 1])
+		if q.distance_to(m) < best:
+			best = q.distance_to(m)
+			along = line[i + 1] - line[i]
+	return (piece[1] - piece[0]).dot(along) >= 0.0
 
 
 static func _cut_line(line: PackedVector2Array, shape: PackedVector2Array,
@@ -677,6 +699,14 @@ static func upgrade(old: Dictionary) -> Dictionary:
 	st["lots"] = lots.size()
 	st["built"] = parcel["built"]
 	out["stats"] = st
+	return out
+
+
+static func _road_out(r: Dictionary) -> Dictionary:
+	var out := {"name": r["name"], "ref": r["ref"], "kind": r["kind"], "width": r["width"],
+		"line": _ring(r["line"])}
+	if r.has("oneway"):
+		out["oneway"] = r["oneway"]
 	return out
 
 

@@ -220,11 +220,27 @@ func _redraw(block: Dictionary, id: String) -> bool:
 		crop.resize(600, 600, Image.INTERPOLATE_NEAREST)
 		sheet.blit_rect(crop, Rect2i(0, 0, 600, 600), Vector2i(k * 600, 0))
 	sheet.save_png("%s/%s_redraw.png" % [_out, id])
-	print("RENDER %s redraws vs a fresh drawing: %d pixels differ, %d off the palette" % [id,
-		diff, _off_palette(after)])
+	# Traffic's depth and shadow images must follow the redraws too
+	var depth_diff := _diff(view.depth_tex.get_image(), fresh_view.depth_tex.get_image())
+	var shade_diff := _diff(view.shade_tex.get_image(), fresh_view.shade_tex.get_image())
+	print("RENDER %s redraws vs a fresh drawing: %d pixels differ, %d off the palette; depth %d, shadow %d differ" % [
+		id, diff, _off_palette(after), depth_diff, shade_diff])
+	if depth_diff > REDRAW_SLACK or shade_diff > REDRAW_SLACK:
+		printerr("RENDER FAILED: the depth or shadow image did not follow the lot redraws")
+		return false
 	view.queue_free()
 	fresh_view.queue_free()
 	return diff <= REDRAW_SLACK and _off_palette(after) == 0
+
+
+func _diff(a_img: Image, b_img: Image) -> int:
+	var a := a_img.get_data()
+	var b := b_img.get_data()
+	var n := 0
+	for i in range(0, mini(a.size(), b.size()), 4):
+		if a[i] != b[i] or a[i + 1] != b[i + 1] or a[i + 2] != b[i + 2] or a[i + 3] != b[i + 3]:
+			n += 1
+	return n
 
 
 # micro-font text into an image, each font pixel 4x4
