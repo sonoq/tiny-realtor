@@ -114,10 +114,6 @@ func _size() -> Vector2:
 	return World.screen_size(_level)
 
 
-func _screen(u: Vector2) -> Vector2:
-	return _pan + u * _size()
-
-
 func _unit_at(at: Vector2) -> Vector2:
 	return (at - _pan) / _size()
 
