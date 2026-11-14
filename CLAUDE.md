@@ -178,9 +178,20 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   far, back on the intro leaves the job waiting. `paused` + `run(dt)` let tools step it.
 - `minigames/` - `job_game.gd` (`JobGame`, base: own clock, `limit` = `Economy.JOB_S`, score 0..1,
   `press` / `click` / `drag`, rising pops, pixel `sprite` / `inked` / `thick` helpers, seeded
-  rng), `plunge_game.gd` (`PlungeGame`, "Váter atascado": a marker sweeps a gauge, push in the
-  gold zone `GOAL` (6) times; it speeds up and the zone narrows, never under a tenth of a second
-  in it; a miss waits `MISS_WAIT`, so mashing loses), `wires_game.gd` (`WiresGame`, "Sin luz en
+  rng, `outro()` = how long the end shows before the result, JobPanel waits for it),
+  `pipes_game.gd` (`PipesGame`, "Sin agua en casa"; it replaced the toilet job, Oscar: a 5x4
+  board of pipe pieces (80 px tiles) between the water main (left, red wheel) and the tenant's
+  sink (right); a tap turns a piece a quarter clockwise; water runs from the main through every
+  piece joined to it (`flow_of`, filling at `FLOW` pieces a second, dripping from open ends) and,
+  once the main reaches the sink, on into the basin ("¡AGUA!"; the game ends at the join, the
+  water keeps running in its `outro`). The board: a random run of `LEN_MIN`..`LEN_MAX` straights
+  and elbows from the main to the sink with at least `WAYS_MIN` bits of ways to lie (so random
+  taps hardly ever find it), the rest straights, elbows and tees at random, then every piece of
+  the run turned wrong within `TURNS_MAX` taps, the first one shut to the main; boards that
+  sweeping every tile in turn (rows, columns, backwards, four rounds) would join are scrambled
+  again (`_mash_safe`). Score 1 joined, else `PART` (0.9) x the share of the run the water
+  reaches; idle = 0. A save's "plunge" job or `last_game` becomes "pipes" (`Events.sanitize`)),
+  `wires_game.gd` (`WiresGame`, "Sin luz en
   casa": 4 wires to their sockets in a shuffled order, click-click either way or drag over the
   socket; colours plus shapes), `bulbs_game.gd` (`BulbsGame`, "Bombillas fundidas": a facade at
   night, tap the dark windows; more go out at `BURNS`, each flickering first). Every hit box is
@@ -553,8 +564,8 @@ the office's rent; on load it becomes the free solar `{t: OFFICE_LOT_TIER, fill:
 office's rent is its `office_income`, so a migrated game earns the same.
 v3 adds `events` {wait (active s to the next), n, pending {office id: {n, kind (sale | express |
 vip | buyer | job), office, lot, left / life (active s), seed, minutes (reserved), cut, secs, x,
-game (plunge | wires | bulbs)}}, budget (minutes), budget_t, last_game, log [{n, kind, how, paid,
-t, game?, score?}], stats {spawned, taken, expired, dismissed, paid, jobs, jobs_won,
+game (pipes | wires | bulbs; an old "plunge" loads as pipes)}}, budget (minutes), budget_t,
+last_game, log [{n, kind, how, paid, t, game?, score?}], stats {spawned, taken, expired, dismissed, paid, jobs, jobs_won,
 express_saved}}, an office's `express` (unix s an accepted exprés lasts until) and a lot's `vip`
 (unix s) + `vx` (rent multiplier); a v2 save gets `events` fresh; `Events.sanitize` drops odd
 ones.
@@ -631,10 +642,12 @@ list Barcelona's pin opens (its office row must open the office), Tokyo, the cit
 back, the 200 px window; last the events (`8N_event_*` / `8N_job_*`, numbered from 80, made to
 order in the first office: a flash sale's banner and the lot it opens, a job's banner, each
 minigame's intro, mid-play and result through the real input path with its clock stepped by
-hand, the wires solved frame by frame into `events_gif/NNN.png`, a VIP's star, the 200 px window
+hand, the pipes and the wires solved frame by frame into `pipes_gif/NNN.png` and
+`events_gif/NNN.png`, a VIP's star, the 200 px window
 with a banner; `Events.auto` is off for the whole capture, so events never pop up in the other
 shots). `docs/screenshots/events/` holds the best ones for Oscar on real Barcelona data and
-`wires.gif` (`ffmpeg -framerate 12 -i events_gif/%03d.png` with a palette). Leave Valencia out
+`wires.gif` / `pipes.gif` (`ffmpeg -framerate 12 -i events_gif/%03d.png` or `pipes_gif/%03d.png`,
+cropped to 600x540, halved with nearest and a palette). Leave Valencia out
 of `--spot`. Extra args: `--fixture`, `--fresh` (also re-download city maps;
 offices are always wiped first), `--spot=city:lat:lon` (repeatable, replaces the places),
 `--raw-cache=DIR`. Under Xvfb a `WARNING: Could not set V-Sync mode` line is normal.
@@ -678,8 +691,10 @@ builds a tower there through the one-lot redraw and fails if any pixel of the ca
 through time away, expiry, the pace, determinism, every kind turning up, each offer's effect -
 a sale's price, an exprés's half time and its window, a VIP's extra to the second, a buyer's
 cash, a job's pay by score and only once - the hourly cap, the event traits, the three
-minigames played well, badly and by mashing, and saves of pending events and timed effects, a
-v2 save and malformed event data) (buy, build, multi-tier, rent, level up and
+minigames played well, badly and by mashing (the pipes over 400 boards: each has a way, starts
+dry and a decent player joins it in time; tapping every tile in turn never joins it, random
+taps at most 1 %; half a job scores in between), and saves of pending events and timed effects,
+a v2 save, a toilet job from an old save turned pipes and malformed event data) (buy, build, multi-tier, rent, level up and
 the free manager, saves, time away and its cap, clock moved back and forth, a broken save, the
 bank's limits and an adversarial max-loan + lost income + week away, managers, the builder, the
 office's free lot built like any other and its income by level, a v1 save migrated on load).

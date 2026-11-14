@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://023swfo6wwc8"
-path="res://.godot/imported/04_vater_inicio.png-04f73b44c40f4f222d9495bf3029d83e.ctex"
+uid="uid://g4p6kta7hvft"
+path="res://.godot/imported/04_tuberias_inicio.png-1fef846d8b40ce272872e0999e9a8595.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://docs/screenshots/events/04_vater_inicio.png"
-dest_files=["res://.godot/imported/04_vater_inicio.png-04f73b44c40f4f222d9495bf3029d83e.ctex"]
+source_file="res://docs/screenshots/events/04_tuberias_inicio.png"
+dest_files=["res://.godot/imported/04_tuberias_inicio.png-1fef846d8b40ce272872e0999e9a8595.ctex"]
 
 [params]
 

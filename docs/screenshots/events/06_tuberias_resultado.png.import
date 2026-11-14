@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b6uiww12q3axg"
-path="res://.godot/imported/05_vater_jugando.png-eca4fce30c1ccd1fb46dcf85b48daa29.ctex"
+uid="uid://j51occ4rjf0f"
+path="res://.godot/imported/06_tuberias_resultado.png-f7780707ea6fbb628cb0d781564a4912.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://docs/screenshots/events/05_vater_jugando.png"
-dest_files=["res://.godot/imported/05_vater_jugando.png-eca4fce30c1ccd1fb46dcf85b48daa29.ctex"]
+source_file="res://docs/screenshots/events/06_tuberias_resultado.png"
+dest_files=["res://.godot/imported/06_tuberias_resultado.png-f7780707ea6fbb628cb0d781564a4912.ctex"]
 
 [params]
 

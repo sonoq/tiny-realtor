@@ -67,6 +67,12 @@ func score() -> float:
 	return 0.0
 
 
+# how long the finished game keeps showing before the result (a game whose ending plays out,
+# like the water reaching the sink, asks for longer)
+func outro() -> float:
+	return OUTRO_S
+
+
 func left() -> float:
 	return maxf(0.0, limit - t)
 

@@ -817,35 +817,7 @@ func _events_cap_and_traits() -> void:
 
 # the minigames, played like a player would (and badly)
 func _minigames() -> void:
-	# the plunger: press when the marker is in the zone, six times
-	var p := PlungeGame.new(12345)
-	var guard := 0
-	while not p.over and guard < 2000:
-		guard += 1
-		p.step(1.0 / 60.0)
-		var z := p.zone()
-		if p.ready_to_push() and p.marker() > z.x + 0.02 and p.marker() < z.y - 0.02:
-			p.press(PlungeGame.PUSH.get_center())
-	_check(p.won and p.score() == 1.0 and p.t < Economy.JOB_S, "the plunger can be won: %d/%d in %.1f s"
-		% [p.good, PlungeGame.GOAL, p.t])
-	var miss := PlungeGame.new(12345)
-	for _k in 40:
-		miss.step(0.05)
-		var z := miss.zone()
-		if miss.marker() < z.x - 0.1 or miss.marker() > z.y + 0.1:
-			miss.press(PlungeGame.PUSH.get_center())
-	_check(miss.good == 0 and miss.misses > 0 and not miss.ready_to_push() or miss.misses > 0,
-		"pushing off the zone misses")
-	var idle := PlungeGame.new(7)
-	for _k in 1000:
-		idle.step(0.05)
-	_check(idle.over and not idle.won and idle.score() == 0.0, "the plunger times out at 0")
-	# mashing does not pay: a press every frame for the whole time
-	var mash := PlungeGame.new(99)
-	while not mash.over:
-		mash.step(1.0 / 60.0)
-		mash.press(PlungeGame.PUSH.get_center())
-	_check(mash.score() < 1.0, "mashing does not win the plunger: %d" % mash.good)
+	_pipes()
 	# the wires, by clicks and by drag, and a wrong socket
 	var w := WiresGame.new(4242)
 	w.step(0.1)
@@ -895,6 +867,108 @@ func _minigames() -> void:
 	_check(b2.hit(0).size.x >= Ui.MIN_HIT, "windows are at least MIN_HIT")
 	# the same seed plays the same
 	_check(WiresGame.new(5).slot_of == WiresGame.new(5).slot_of, "a job's seed fixes its layout")
+
+
+# the pipes, over many boards: each one has a way, a decent player joins it in time, an idle one
+# scores 0, half a job scores in between, and mashing (every tile in turn, or at random) never
+# joins it
+func _pipes() -> void:
+	var boards := 400
+	var slowest := 0.0
+	var turns_most := 0
+	var mash_won := 0
+	var luck_won := 0
+	var bad := ""
+	for s in boards:
+		var p := PipesGame.new(1000 + s)
+		var m: Array[int] = p.mask.duplicate()
+		var need := 0
+		var all_wrong := true
+		for k in p.path:
+			m[k] = p.sol[k]
+			need += p.turns_needed(k)
+			all_wrong = all_wrong and p.turns_needed(k) > 0
+		var ok := p.joins(m) and not p.connected() and p.score() == 0.0 and all_wrong \
+			and p.path.size() >= PipesGame.LEN_MIN and p.path.size() <= PipesGame.LEN_MAX \
+			and p.path[0] == p.src_row * PipesGame.COLS \
+			and p.path[-1] == p.out_row * PipesGame.COLS + PipesGame.COLS - 1 \
+			and need <= PipesGame.TURNS_MAX
+		turns_most = maxi(turns_most, need)
+		# a decent player: a look at each piece of the way, then its taps
+		var q := PipesGame.new(1000 + s)
+		for k in q.path:
+			q.step(0.6)
+			for _n in q.turns_needed(k):
+				q.step(0.25)
+				q.press(q.tile_rect(k).get_center())
+		ok = ok and q.won and q.score() == 1.0 and q.t < Economy.JOB_S
+		slowest = maxf(slowest, q.t)
+		# a press every frame on every tile in turn, for the whole job
+		var r := PipesGame.new(1000 + s)
+		var i := 0
+		while not r.over:
+			r.step(1.0 / 60.0)
+			r.press(r.tile_rect(i % (PipesGame.COLS * PipesGame.ROWS)).get_center())
+			i += 1
+		if r.won:
+			mash_won += 1
+		# eight taps a second on tiles picked at random
+		var u := PipesGame.new(1000 + s)
+		var dice := RandomNumberGenerator.new()
+		dice.seed = s
+		while not u.over:
+			u.step(0.125)
+			u.press(u.tile_rect(dice.randi() % (PipesGame.COLS * PipesGame.ROWS)).get_center())
+		if u.won:
+			luck_won += 1
+		if not ok and bad == "":
+			bad = "board %d" % (1000 + s)
+	_check(bad == "", "every pipes board has a way, starts dry and a decent player joins it %s"
+		% bad)
+	_check(slowest < Economy.JOB_S * 0.75, "a decent player joins the pipes within %.1f s"
+		% slowest)
+	_check(mash_won == 0, "tapping every pipe in turn never joins it: %d/%d" % [mash_won, boards])
+	_check(luck_won * 100 <= boards, "tapping pipes at random hardly ever joins them: %d/%d"
+		% [luck_won, boards])
+	print("  pipes: %d boards, the most taps a way needs %d, a decent player %.1f s at worst, "
+		% [boards, turns_most, slowest] + "mashing won %d, random taps won %d" % [mash_won,
+		luck_won])
+	# idle: the water never leaves the main
+	var idle := PipesGame.new(7)
+	for _k in 400:
+		idle.step(0.05)
+	_check(idle.over and not idle.won and idle.score() == 0.0, "the pipes time out at 0")
+	# half the way fixed, then out of time: a part of the pay
+	var half := PipesGame.new(8)
+	var fixed := ceili(half.path.size() / 2.0)
+	for j in fixed:
+		var k: int = half.path[j]
+		for _n in half.turns_needed(k):
+			half.press(half.tile_rect(k).get_center())
+	_check(half.wet_path() >= fixed and not half.won, "the water runs as far as the way is fixed")
+	for _k in 400:
+		half.step(0.05)
+	_check(half.over and half.score() >= PipesGame.PART * fixed / half.path.size() - 1e-9
+		and half.score() < 1.0, "half the pipes score in between: %.2f" % half.score())
+	# the last turn joins it: the game ends at once, the water still runs to the sink after
+	var win := PipesGame.new(9)
+	for k in win.path:
+		for _n in win.turns_needed(k):
+			win.press(win.tile_rect(k).get_center())
+	_check(win.won and win.over and win.outro() > JobGame.OUTRO_S - 1e-9,
+		"joining the pipes wins and the water runs on (%.2f s)" % win.outro())
+	var taps := win.turns
+	win.press(win.tile_rect(win.path[0]).get_center())
+	_check(win.turns == taps, "a finished board does not turn")
+	_check(win.tile_rect(0).size.x >= Ui.MIN_HIT and win.tile_rect(0).size.y >= Ui.MIN_HIT,
+		"pipe tiles are at least MIN_HIT")
+	_check(win.tile_under(Vector2(5, 5)) == -1 and win.tile_under(win.tile_rect(19).end
+		- Vector2(1, 1)) == 19, "taps find their tile")
+	_check(PipesGame.new(5).mask == PipesGame.new(5).mask and PipesGame.new(5).path
+		== PipesGame.new(5).path, "a board's seed fixes its layout")
+	_check(PipesGame.rot(PipesGame.N, 1) == PipesGame.E and PipesGame.rot(PipesGame.W, 1)
+		== PipesGame.N and PipesGame.rot(PipesGame.TEE, 4) == PipesGame.TEE,
+		"pieces turn clockwise")
 
 
 func _events_save() -> void:
@@ -954,6 +1028,25 @@ func _events_save() -> void:
 	_play(q, 60.0)
 	_ev_play(q, 200.0, true)
 	_check(is_finite(q.money()), "a sanitized events save plays on")
+	# a save from when there was a toilet job: its waiting job becomes the pipes
+	var old := g.state.duplicate(true)
+	old["events"]["pending"][OFFICE] = {"n": 3, "kind": "job", "office": OFFICE,
+		"lot": _block["office_plot"], "left": 30.0, "life": 60.0, "seed": 3, "minutes": 2.0,
+		"game": "plunge"}
+	old["events"]["last_game"] = "plunge"
+	Store.write_json(SAVE, old)
+	var pl := _game()
+	pl.load_or_new()
+	var pp := Events.pending(pl, OFFICE)
+	_check(pp.get("game", "") == "pipes" and Events.of(pl)["last_game"] == "pipes"
+		and JobPanel.make(pp["game"], int(pp["seed"])) is PipesGame,
+		"a waiting toilet job from an old save becomes the pipes")
+	var odd := g.state.duplicate(true)
+	odd["events"]["last_game"] = 7
+	Store.write_json(SAVE, odd)
+	var od := _game()
+	od.load_or_new()
+	_check(Events.of(od)["last_game"] == "", "an odd last minigame is forgotten")
 	for f in [SAVE + ".bak", SAVE + ".tmp"]:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(f))
 

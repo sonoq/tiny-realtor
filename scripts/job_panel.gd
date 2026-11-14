@@ -17,7 +17,7 @@ const DONE_CARD := Rect2(60, 160, 480, 290)
 const OK_BTN := Rect2(200, 374, 200, 56)
 # a short "¡Ya!" before the clock starts, so the tap on EMPEZAR is not the first move
 const READY_S := 0.7
-const TITLES := {"plunge": "Váter atascado", "wires": "Sin luz en casa",
+const TITLES := {"pipes": "Sin agua en casa", "wires": "Sin luz en casa",
 	"bulbs": "Bombillas fundidas"}
 
 var game: Game
@@ -42,7 +42,7 @@ func _init(the_game: Game, office_id: String, event: Dictionary, street_name: St
 	id = office_id
 	ev = event.duplicate()
 	street = street_name
-	job = make(ev.get("game", "plunge"), int(ev.get("seed", 1)))
+	job = make(ev.get("game", "pipes"), int(ev.get("seed", 1)))
 
 
 static func make(kind: String, seed: int) -> JobGame:
@@ -51,7 +51,7 @@ static func make(kind: String, seed: int) -> JobGame:
 			return WiresGame.new(seed)
 		"bulbs":
 			return BulbsGame.new(seed)
-	return PlungeGame.new(seed)
+	return PipesGame.new(seed)
 
 
 static func title_of(kind: String) -> String:
@@ -80,7 +80,7 @@ func run(dt: float) -> void:
 		_ready_t += dt
 		return
 	job.step(dt)
-	if job.over and job.since >= JobGame.OUTRO_S:
+	if job.over and job.since >= job.outro():
 		_finish()
 
 

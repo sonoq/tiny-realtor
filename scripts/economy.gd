@@ -161,7 +161,7 @@ const BUYER_MIN: Array[float] = [2.0, 4.0]
 const JOB_MIN := 4.0
 const JOB_FAIL := 0.15
 const JOB_S := 15.0
-const JOB_GAMES: Array[String] = ["plunge", "wires", "bulbs"]
+const JOB_GAMES: Array[String] = ["pipes", "wires", "bulbs"]
 
 # location bonuses from the real map: [name on the card, share of extra rent]
 const MOD_PARK := ["Parque cerca", 0.20]

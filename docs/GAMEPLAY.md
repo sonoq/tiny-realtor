@@ -245,12 +245,17 @@ medias, en proporción; aunque salga mal, el **15 %**. Nunca se pierde nada: vol
 el encargo con lo hecho y cobra. Duran **15 s** (con un "¡YA!" antes, para que el toque de EMPEZAR
 no cuente). Nunca sale el mismo minijuego dos veces seguidas. Al final, de una a tres estrellas.
 
-- **Váter atascado**: una marca va y viene por una barra; pulsa (en cualquier sitio o en
-  ¡EMPUJA!) cuando pase por la zona dorada. 6 aciertos lo desatascan: el desatascador baja, el
-  agua marrón baja y se aclara ("¡GLUB!") y al final tira de la cadena. Fallar salpica ("¡CHOF!")
-  y el desatascador tarda 0,7 s en estar listo: aporrear no sirve. Cada acierto la zona se
-  estrecha y la marca acelera, sin pasar de una décima de segundo en la zona: pide ritmo, no
-  reflejos.
+- **Sin agua en casa** (sustituye al váter atascado, que Oscar quitó): un tablero de 5x4 piezas
+  de tubería entre la llave de paso (a la izquierda, con su rueda roja) y el lavabo del inquilino
+  (a la derecha). Toca una pieza para girarla un cuarto de vuelta. El agua corre desde la llave
+  por todas las piezas unidas a ella, así que se ve hasta dónde llega, y gotea por los extremos
+  abiertos. Al unir la llave con el lavabo el agua cae en él con un "¡AGUA!" y se acaba. El
+  tablero sale de un camino al azar de 7 a 9 piezas (rectas y codos) de la llave al lavabo, el
+  resto relleno al azar (rectas, codos y tes), y todas las piezas del camino giradas mal: siempre
+  tiene solución, se arregla con 13 toques como mucho (un jugador normal tarda unos 5-9 s) y al
+  empezar no corre nada. Aporrear no sirve: girar todas las piezas por orden nunca lo resuelve
+  (se comprueba al hacer el tablero) y tocar al azar casi nunca. Si se acaba el tiempo, cobra en
+  proporción a lo lejos que llega el agua por el camino (hasta un 90 %).
 - **Sin luz en casa**: un cuadro eléctrico con 4 cables de colores a la izquierda y sus enchufes
   desordenados a la derecha, como en Among Us. Toca un cable y luego su enchufe (o al revés), o
   **arrástralo** hasta él; uno equivocado parpadea en rojo y el cable sigue en tu mano. Cada color
