@@ -5,16 +5,19 @@ extends SceneTree
 # pavement (on no carriageway, lot or garden) or on its crossing, and on a carriageway only while
 # it holds the crossing; no two walkers ever stand inside each other, none on a car; everyone
 # keeps moving (nobody still for STILL_MAX, nobody jumps), people cross the streets, no
-# crossing stays busy for ever and no car waits long for people crossing (how the cars do
-# otherwise is traffic_check's business; the longest wait is printed); the crossings' busy
-# counts match who is on them; a seed always plays the same and another seed differs. By default the made-up fixture areas (no
-# network); --file adds saved office areas:
+# crossing stays busy for ever, no car waits long for people crossing (CAR_HELD_MAX) and no car
+# waits long at all with people about (CAR_WAIT_MAX: the courtesy at the crossings must not
+# jam the junctions); the crossings' busy counts match who is on them; a seed always plays the
+# same and another seed differs. By default the made-up fixture areas and the real Valencia
+# sample (CheckAreas, no network); --file adds saved office areas:
 #
 #   godot --headless --path . --script res://tools/walker_check.gd
 #   godot --headless --path . --script res://tools/walker_check.gd -- --file=/abs/office.json \
 #       [--minutes=5]
 #
 # Prints PASS and exits 0, or prints what failed and exits 1.
+
+const CheckAreas := preload("res://tools/check_areas.gd")
 
 const MINUTES := 5.0
 # two walkers' middles closer than this stand inside each other (m)
@@ -24,6 +27,7 @@ const STILL_MAX := 60.0
 # nor a crossing stay busy, nor a car wait, longer than this (s)
 const BUSY_MAX := 90.0
 const CAR_HELD_MAX := 60.0
+const CAR_WAIT_MAX := 60.0
 # no walker moves further than this in one tick (m)
 const JUMP_MAX := 0.5
 # how far (m) a walker may stray from its crossing's line, and into a carriageway's edge
@@ -45,22 +49,10 @@ func _init() -> void:
 			files.append(arg.substr(7))
 		elif arg.begins_with("--minutes="):
 			minutes = arg.substr(10).to_float()
-	var areas: Array = []
-	for at: Vector2 in [Vector2(41.3925, 2.1640), Vector2(35.6595, 139.7005),
-			Vector2(52.2297, 21.0122)]:
-		var block := BlockBaker.bake(Fixture.area(at.x, at.y, 500.0), at.x, at.y, 500.0)
-		block["office"] = {"id": "fixture_%d" % areas.size(),
-			"city": ["barcelona", "tokyo", "warszawa"][areas.size()]}
-		areas.append([block, "fixture %s" % block["office"]["city"]])
-	for f in files:
-		var block: Variant = Store.read_json(f)
-		if not block is Dictionary:
-			_fail("cannot read " + f)
+	for a: Array in CheckAreas.load_all(files):
+		if a[0] == null:
+			_fail("cannot read " + a[1])
 			continue
-		if int(block.get("format_version", 0)) == 2:
-			block = BlockBaker.upgrade(block)
-		areas.append([block, f.get_file()])
-	for a: Array in areas:
 		_check(a[0], a[1], minutes)
 	if _bad == 0:
 		print("PASS walker_check")
@@ -117,6 +109,9 @@ func _check(block: Dictionary, label: String, minutes: float) -> void:
 					_where(w, i)])
 			worst_still = maxf(worst_still, w.still[i])
 		for i in traffic.count:
+			if traffic.stuck[i] > CAR_WAIT_MAX and worst_car <= CAR_WAIT_MAX:
+				print("  %s: car %d still at %s (tick %d): %s" % [label, i, traffic.pos[i], k,
+					_car(traffic, i)])
 			worst_car = maxf(worst_car, traffic.stuck[i])
 			# standing before a crossing someone is on
 			if traffic.v[i] < 0.05 and traffic._walk_gap(i) < 4.0:
@@ -210,6 +205,8 @@ func _check(block: Dictionary, label: String, minutes: float) -> void:
 		_fail("%s: a crossing was busy for %.0f s" % [label, worst_busy])
 	if worst_held > CAR_HELD_MAX:
 		_fail("%s: a car waited %.0f s for people crossing" % [label, worst_held])
+	if worst_car > CAR_WAIT_MAX:
+		_fail("%s: a car stood still for %.0f s" % [label, worst_car])
 	if jumps > 0:
 		_fail("%s: %d times a walker jumped" % [label, jumps])
 	if w.target > 0 and walked < w.target * minutes * 60.0 * 0.5:
