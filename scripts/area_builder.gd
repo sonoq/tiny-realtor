@@ -30,7 +30,8 @@ const TAGS := 5
 # placeholder asking price per square metre, until the game has an economy
 const PRICE_M2 := 300.0
 # a skyscraper's podium, in pixels
-const PODIUM_Z := 11.0
+# the torres / rascacielos layout (Skyline: CLUSTER A, BRIDGES B, MEGA C, RING D); Oscar's pick
+const SKYLINE_STYLE := Skyline.BRIDGES
 const STREET_TREE_EVERY := 9.0
 const LAMP_EVERY := 17.0
 const DASH_CLEAR := 14.0
@@ -84,6 +85,8 @@ var _lot_now := -1
 var _lot_fade := -1
 # screen boxes price tags and labels must keep clear of (the office's sign)
 var keep_clear: Array[Rect2] = []
+# the layout in use; tools that compare the variants switch it
+static var skyline: int = SKYLINE_STYLE
 
 
 func _init(camera: Iso, block: Dictionary, active_radius: float) -> void:
@@ -157,23 +160,13 @@ static func top_of(tier: int, levels: int) -> float:
 			return 30.0
 		3:
 			return _apt_top(levels + 1) + 6.0
-		4:
-			return _tower_floors(levels + 3) * 3.0 + 7.0 + 7.0 + 12.0
-		5:
-			return PODIUM_Z + _sky_floors(levels) * 3.0 + 9.0 + 33.0 + 18.0
+		4, 5:
+			return Skyline.top(tier, levels)
 	return 16.0
 
 
 static func _apt_top(levels: int) -> float:
 	return 6.0 + (clampi(levels, 4, 9) - 1) * 4.0 + 2.0
-
-
-static func _tower_floors(levels: int) -> int:
-	return clampi(levels + 6, 14, 22)
-
-
-static func _sky_floors(levels: int) -> int:
-	return clampi(levels, 20, 35)
 
 
 # --- ground --------------------------------------------------------------------------------------
@@ -496,7 +489,7 @@ func _develop(plot: Dictionary, poly: PackedVector2Array) -> void:
 	if tier <= 0:
 		_lot(plot, poly)
 		return
-	if owned:
+	if owned and tier <= 3:
 		_roof(iso.pv(Iso.centroid(poly), top_of(tier, levels)))
 	if zone == "industrial" and tier <= 2:
 		_g_poly(poly, "PAVE_S")
@@ -519,29 +512,8 @@ func _develop(plot: Dictionary, poly: PackedVector2Array) -> void:
 			_g_poly(poly, "GRASS")
 			var built := _apartments(plot, poly, owned, "")
 			_scatter(poly, id + "g", GARDEN_TREE, built)
-		4:
-			_plaza(poly, id)
-			var n := clampi(int(Iso.area(poly) / 1900.0), 1, 3)
-			var half := clampf(sqrt(Iso.area(poly)) * 0.13, 6.0, 9.0)
-			var built: Array[PackedVector2Array] = []
-			var spots := _spots(poly, n, half, id)
-			for k in spots.size():
-				var foot := Iso.square(spots[k], half)
-				var lv := levels + int(Iso.h01(id + "tl%d" % k) * 7.0) - 3
-				_tower("%s_t%d" % [id, k], foot, lv, owned)
-				built.append(foot)
-			_scatter(poly, id + "p", PLAZA_TREE, built)
 		_:
-			_plaza(poly, id)
-			var half := clampf(sqrt(Iso.area(poly)) * 0.18, 8.0, 13.0)
-			var spots := _spots(poly, 1, half, id, true)
-			var built: Array[PackedVector2Array] = []
-			if not spots.is_empty():
-				var foot := Iso.square(spots[0], half)
-				var podium := _podium(poly, spots[0], half + 4.0)
-				_sky(id, foot, levels, owned, podium)
-				built.append(podium if podium.size() >= 3 else foot)
-			_scatter(poly, id + "p", PLAZA_TREE, built)
+			_scatter(poly, id + "p", PLAZA_TREE, _skyline(plot, poly, tier, levels, owned))
 
 
 # the player's office lot: apartment blocks round a courtyard (owned colours) and the modest
@@ -584,26 +556,21 @@ func _works(plot: Dictionary, poly: PackedVector2Array, to: int) -> void:
 		for st: Dictionary in _sites(plot, poly, SITE_DEPTH[3], SITE_FRONT[3]):
 			feet.append(Iso.offset(Iso.clean(st["poly"]), -0.8))
 		goal = _apt_top(lv)
-	elif to == 4:
-		var n := clampi(int(Iso.area(poly) / 1900.0), 1, 3)
-		var half := clampf(sqrt(Iso.area(poly)) * 0.13, 6.0, 9.0)
-		for at in _spots(poly, n, half, id):
-			feet.append(Iso.offset(Iso.square(at, half), -1.2))
-		goal = 5.0 + _tower_floors(lv) * 3.0 + 2.0
-	else:
-		var half := clampf(sqrt(Iso.area(poly)) * 0.18, 8.0, 13.0)
-		var spots := _spots(poly, 1, half, id, true)
-		if not spots.is_empty():
-			feet.append(Iso.offset(Iso.square(spots[0], half), -1.0))
-		goal = PODIUM_Z + 6.0 + _sky_floors(lv) * 3.0 + 3.0
+	# torres and rascacielos: the floors of each building the lot's plan will stand
+	var goals: Array[float] = []
+	if to >= 4:
+		for w: Array in Skyline.plan(skyline, to, poly, lv, id)["works"]:
+			feet.append(Iso.offset(w[0], -0.6))
+			goals.append(w[1])
 	var con := Pal.ramp_of("CON")
 	var up := 0.0
 	for k in feet.size():
 		var foot := Iso.clean(feet[k])
 		if foot.size() < 3 or Iso.area(foot) < 4.0:
 			continue
-		var h0 := floorf(goal * 0.35)
-		var h1 := maxf(h0 + 4.0, floorf(goal * 0.7))
+		var g: float = goals[k] if k < goals.size() else goal
+		var h0 := floorf(g * 0.35)
+		var h1 := maxf(h0 + 4.0, floorf(g * 0.7))
 		_object("%s_w%d" % [id, k], foot)
 		_pt.prism(foot, 0.0, h0, WorldShader.STYLE_PLAIN, con, con, false)
 		_open_walls(foot, h0, h1, WorldShader.STYLE_SKELETON, 0.0)
@@ -746,62 +713,6 @@ func _plaza(poly: PackedVector2Array, id: String) -> void:
 				continue
 			var q := iso.pv(a.lerp(b, (j + 0.5) / maxi(1, m)))
 			_g_dot(q, "GRASS_D")
-
-
-# up to n square building spots of half-size `half` well inside the lot, a street-width apart,
-# picked by hash (or the one nearest the middle when `central`); smaller when nothing fits
-func _spots(poly: PackedVector2Array, n: int, half: float, seed: String,
-		central: bool = false) -> Array[Vector2]:
-	var out: Array[Vector2] = []
-	var inner := Iso.offset(poly, -3.0)
-	if inner.size() < 3:
-		return out
-	var box := Geo.bounds(inner)
-	var h := half
-	while h >= 5.0 and out.is_empty():
-		var step := h * 2.0 + 7.0
-		var cand: Array = []
-		var y := box.position.y + h
-		while y <= box.end.y - h:
-			var x := box.position.x + h
-			while x <= box.end.x - h:
-				var at := Vector2(x, y)
-				if Iso.contains(inner, Iso.square(at, h)):
-					cand.append([Iso.h01(seed + "sp%.0f_%.0f" % [x, y]), at])
-				x += 2.0
-			y += 2.0
-		if central:
-			var mid := Iso.centroid(poly)
-			cand.sort_custom(func(p: Array, q: Array) -> bool:
-				return (p[1] as Vector2).distance_to(mid) < (q[1] as Vector2).distance_to(mid))
-		else:
-			cand.sort_custom(func(p: Array, q: Array) -> bool: return p[0] < q[0])
-		for c: Array in cand:
-			var at: Vector2 = c[1]
-			var clear := true
-			for o in out:
-				if absf(o.x - at.x) < step and absf(o.y - at.y) < step:
-					clear = false
-					break
-			if clear:
-				out.append(at)
-				if out.size() >= n:
-					break
-		if out.is_empty():
-			h *= 0.8
-	return out
-
-
-# a skyscraper's podium: a square round its tower, cut to the lot
-func _podium(poly: PackedVector2Array, at: Vector2, half: float) -> PackedVector2Array:
-	var inner := Iso.offset(poly, -2.0)
-	if inner.size() < 3:
-		return PackedVector2Array()
-	var best := PackedVector2Array()
-	for part in Geo.clip(Iso.square(at, half), inner):
-		if best.size() < 3 or Iso.area(part) > Iso.area(best):
-			best = part
-	return Iso.clean(best) if best.size() >= 3 else best
 
 
 # an empty lot: dirt (a yard in industrial zones) inside fence posts, with clods and tufts, and
@@ -1006,68 +917,105 @@ func _pool(id: String, poly: PackedVector2Array, rect: PackedVector2Array) -> vo
 			_g_poly(deep, "CYAN")
 
 
-func _tower(id: String, poly: PackedVector2Array, levels: int, owned: bool) -> void:
-	var base := Iso.offset(poly, -1.2)
-	if base.size() < 3:
-		base = poly
-	var top := Iso.offset(base, -2.2)
-	var hz := 5.0 + _tower_floors(levels) * 3.0 + 2.0
-	var hz2 := hz + 7.0
-	var con := Pal.ramp_of("CON")
-	var teal := Pal.ramp_of("TEAL")
-	_object(id, base)
-	_pt.prism(base, 0.0, hz, WorldShader.STYLE_TOWER, con, teal if owned else con)
-	var crown := hz
-	if top.size() >= 3 and Iso.area(top) > 6.0:
-		_pt.prism(top, hz, hz2, WorldShader.STYLE_TOWER, con, teal if owned else con, true, 1)
-		_roof_props(id, top, hz2, owned, true)
-		crown = hz2
-	_close(crown, base)
-	tallest = maxf(tallest, crown + 16.0)
-
-
-func _sky(id: String, poly: PackedVector2Array, levels: int, owned: bool,
-		podium: PackedVector2Array = PackedVector2Array()) -> void:
-	var b0 := Iso.offset(poly, -1.0)
-	if b0.size() < 3:
-		b0 = poly
-	var b1 := Iso.offset(b0, -1.6)
-	var b2 := Iso.offset(b1, -1.8) if b1.size() >= 3 else PackedVector2Array()
-	var base := PODIUM_Z if podium.size() >= 3 else 0.0
-	var z0 := base + 6.0 + _sky_floors(levels) * 3.0 + 3.0
-	var z1 := z0 + 21.0
-	var z2 := z1 + 12.0
-	var con := Pal.ramp_of("CON")
-	var teal := Pal.ramp_of("TEAL")
-	var sty := WorldShader.STYLE_SKY
-	_object(id, podium if podium.size() >= 3 else b0)
-	if podium.size() >= 3:
-		_pt.prism(podium, 0.0, base, WorldShader.STYLE_TOWER, con, teal if owned else con)
-	_pt.prism(b0, base, z0, sty, 0, teal if owned else con, true, 1 | (1 << 1), base == 0.0)
-	var top := z0
-	var crown := b0
-	if b1.size() >= 3 and Iso.area(b1) > 6.0:
-		_pt.prism(b1, z0, z1, sty, 0, teal if owned else con, true, 1 << 1)
-		top = z1
-		crown = b1
-		if b2.size() >= 3 and Iso.area(b2) > 4.0:
-			_pt.prism(b2, z1, z2, sty, 0, teal if owned else Pal.ramp_of("GLS"), true, 2 << 1)
-			top = z2
-			crown = b2
-	var cc := Iso.centroid(crown)
-	var tip := iso.pv(cc, top)
-	for k in 14:
-		_pt.dot(tip + Vector2(0, -k), Pal.i("SL5") if k % 4 else Pal.i("SL3"))
-	_pt.dot(tip + Vector2(0, -14), Pal.i("RED"))
-	_pt.dot(tip + Vector2(0, -15), Pal.i("RED"))
+# a torres or rascacielos lot as Skyline plans it, on a plaza: each group of buildings one
+# object, each mass in it ringed in ink on its own (towers sharing a podium still read apart);
+# returns the footprints the plaza's trees keep off
+func _skyline(plot: Dictionary, poly: PackedVector2Array, tier: int, levels: int,
+		owned: bool) -> Array[PackedVector2Array]:
+	var id: String = plot["id"]
+	var plan := Skyline.plan(skyline, tier, poly, levels, id)
+	_plaza(poly, id)
+	for g: Array in plan["ground"]:
+		if (g[0] as PackedVector2Array).size() >= 3:
+			_g_poly(Iso.clean(g[0]), g[1])
+	var groups: Array = plan["groups"]
+	for k in groups.size():
+		var group: Dictionary = groups[k]
+		_object("%s_k%d" % [id, k], group["foot"], false, false)
+		for mass: Array in group["masses"]:
+			var start := _pt.ops.size()
+			for piece: Dictionary in mass:
+				_piece("%s_k%d" % [id, k], piece, owned)
+			_pt.ink_under(start)
+		_close(group["top"])
+		for sh: Array in group["shadows"]:
+			_shadow(sh[0], minf(sh[1], 40.0))
+	var top_z: float = plan["top_z"]
 	if owned:
-		var far := crown[0]
-		for q in crown:
+		_roof(iso.pv(plan["top"], top_z + 10.0))
+	tallest = maxf(tallest, top_z + 20.0)
+	var built: Array[PackedVector2Array] = []
+	built.assign(plan["built"])
+	return built
+
+
+# one piece of a Skyline mass
+func _piece(id: String, p: Dictionary, owned: bool) -> void:
+	var foot: PackedVector2Array = p.get("foot", PackedVector2Array())
+	var z0: float = p.get("z0", 0.0)
+	var z1: float = p.get("z1", 0.0)
+	var con := Pal.ramp_of("CON")
+	var roof := Pal.ramp_of("TEAL") if owned else con
+	match int(p["look"]):
+		Skyline.TOWER:
+			_pt.prism(foot, z0, z1, WorldShader.STYLE_TOWER, con, roof, true,
+				0 if p.get("lobby", false) else 1, z0 == 0.0)
+			if p.get("props", false):
+				_roof_props(id, foot, z1, owned, true)
+		Skyline.GLASS:
+			var v := (1 if p.get("lobby", false) else 0) | (int(p.get("crown", 0)) << 1)
+			# a crown's roof is glass unless the player owns it (teal, like every owned roof)
+			var top := roof
+			if int(p.get("crown", 0)) == 2 and not owned:
+				top = Pal.ramp_of("GLS")
+			_pt.prism(foot, z0, z1, WorldShader.STYLE_SKY, 0, top, true, v, z0 == 0.0)
+		Skyline.PODIUM:
+			_pt.prism(foot, z0, z1, WorldShader.STYLE_TOWER, con, roof, true, 0, true)
+		Skyline.BRIDGE:
+			_pt.prism(foot, z0, z1, WorldShader.STYLE_SKY, 0, Pal.ramp_of("GLS"), false, 2 << 1,
+				false)
+		Skyline.LAWN:
+			_pt.flat(foot, z1, Pal.i("GRASS"))
+			var hedge := Iso.offset(foot, -0.7)
+			if hedge.size() >= 3:
+				_pt.flat(hedge, z1, Pal.i("GRASS_L"))
+		Skyline.TREE:
+			var at: Vector2 = p["at"]
+			_pt.tex("tree:%d:small" % int(Iso.h01(id + str(at)) * 4.0), iso.pv(at, p["z"]))
+		Skyline.PAD:
+			_helipad(foot, z1)
+	var spire := int(p.get("spire", 0))
+	if spire > 0:
+		var tip := iso.pv(Iso.centroid(foot), z1)
+		for k in spire:
+			_pt.dot(tip + Vector2(0, -k), Pal.i("SL5") if k % 3 else Pal.i("SL3"))
+		_pt.dot(tip + Vector2(0, -spire), Pal.i("RED"))
+	if owned and p.get("flag", false):
+		var far := foot[0]
+		for q in foot:
 			if q.x + q.y < far.x + far.y:
 				far = q
-		_pt.tex("flag:6:cyan", iso.pv(far, top) + Vector2(1, 1))
-	_close(top, podium if podium.size() >= 3 else b0)
-	tallest = maxf(tallest, top + 20.0)
+		_pt.tex("flag:6:cyan", iso.pv(far, z1) + Vector2(1, 1))
+
+
+# a helipad on a flat roof: a dark disc, a gold ring and a cream H
+func _helipad(roof: PackedVector2Array, z: float) -> void:
+	var c := Iso.centroid(roof)
+	var r := 3.2
+	var disc := PackedVector2Array()
+	for k in 12:
+		var a := TAU * k / 12.0
+		disc.append(c + Vector2(cos(a), sin(a)) * r)
+	if not Iso.contains(roof, disc):
+		return
+	disc = Iso.clean(disc)
+	_pt.flat(disc, z, Pal.i("GOLD_M"))
+	_pt.flat(Iso.offset(disc, -0.6), z, Pal.i("SL2"))
+	var at := iso.pi(c.x, c.y, z)
+	for q: Vector2i in [Vector2i(-1, -2), Vector2i(-1, -1), Vector2i(-1, 0), Vector2i(-1, 1),
+			Vector2i(-1, 2), Vector2i(1, -2), Vector2i(1, -1), Vector2i(1, 0), Vector2i(1, 1),
+			Vector2i(1, 2), Vector2i(0, 0)]:
+		_pt.dot(at + Vector2(q), Pal.i("CREAM"))
 
 
 # stairwell huts and water tanks on a flat roof (the Eixample's "casetes"), a flag when owned

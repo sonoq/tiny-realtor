@@ -620,7 +620,8 @@ class Canvas:
 				var r := Rect2(op[2] + sp[1] + off, sp[2])
 				var a := Rect2(Sprites.atlas_rect(op[1]))
 				var base := Vector2(WorldShader.ATLAS_UV, 0)
-				var code := Color8(how, 0, 0)
+				# a sprite's ink copy (Painter.ink_under) is ink whatever the pass draws
+				var code := Color8(3 if op.size() > 3 else how, 0, 0)
 				draw_polygon(PackedVector2Array([r.position, Vector2(r.end.x, r.position.y),
 					r.end, Vector2(r.position.x, r.end.y)]), PackedColorArray([code, code, code,
 					code]), PackedVector2Array([a.position + base, Vector2(a.end.x,
