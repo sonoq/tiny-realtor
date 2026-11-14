@@ -102,6 +102,8 @@ static func get_sprite(key: String) -> Array:
 			_tag(px, parts[1])
 		"billboard":
 			_billboard(px)
+		"plate":
+			_plate(px)
 		"pin":
 			_pin(px)
 	var out := _bake(px)
@@ -262,6 +264,18 @@ static func _billboard(px: Dictionary) -> void:
 			if icon[j][i] == "1":
 				_put(px, bx0 + 4 + i, by0 + 4 + j, "CYAN")
 	micro(px, bx0 + 11, by0 + 4, "REALTOR", Pal.i("GOLD"))
+
+
+# the office's small rooftop plate: REALTOR in gold on a dark frame, on two short legs, anchored
+# at the roof's middle (much smaller than the mockup's billboard, so the office stays modest)
+static func _plate(px: Dictionary) -> void:
+	var w := micro_w("REALTOR") + 6
+	var x0 := -w / 2
+	frame(px, x0, -13, x0 + w, -4, Pal.i("GOLD"), Pal.i("SL1"))
+	micro(px, x0 + 3, -11, "REALTOR", Pal.i("GOLD"))
+	for lx: int in [x0 + 4, x0 + w - 4]:
+		for k in 3:
+			_put(px, lx, -3 + k, "SL1")
 
 
 # a gold arrow floating over the office, so it is found at a glance even zoomed out

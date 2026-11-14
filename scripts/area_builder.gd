@@ -7,7 +7,11 @@ extends RefCounted
 #   pre     - drawn in colour over the ground before any object (the slab's earth cut, the ring)
 #   objects - buildings, trees, cars, lamps, people: each with its ops, footprint hull and
 #             screen box, put in painter's order by DepthSort and outlined in ink when drawn
-#   post    - drawn last, over everything (price tags)
+#   post    - drawn last, over everything (price tags; `tags` false leaves them to the caller)
+# What belongs to one lot (its ground ops in `lot_ground`, its shadows in `lot_shadows`, its
+# objects tagged with its index) can be thrown away and laid out again by `rebuild_lot`, so the
+# game can redraw a lot it bought or built on without redrawing the whole area. A lot whose
+# plot has "works" (the tier being built) is drawn as a building site with scaffolding.
 # Each lot ("terreno", the file's plots[]) is drawn as a little development of its tier, laid
 # out here from the lot's own polygon, street sides, tier, levels, zone and owned flag, so a lot
 # can be rebuilt at any tier without touching the file: 0 an empty fenced lot with a sale sign,
@@ -44,6 +48,10 @@ const SHED_FRONT := Vector2(18, 30)
 # garden and plaza trees: one per this many square metres
 const GARDEN_TREE := 70.0
 const PLAZA_TREE := 120.0
+# the office building's largest footprint (m), long x short side
+const OFFICE_SIZE := Vector2(17, 12)
+# the office stands on a site at most this much farther from the clicked point than the nearest
+const OFFICE_NEAR := 30.0
 
 var iso: Iso
 var radius := 0.0
@@ -53,11 +61,16 @@ var shadows: Array = []
 var pre: Array = []
 var objects: Array = []
 var post: Array = []
+# per lot (the file's plots[] index): its ground ops, drawn after `ground`, and its shadows
+var lot_ground: Array = []
+var lot_shadows: Array = []
+# price tags over the signed lots nearest the office; the game draws its own, live
+var tags := true
 # where income pops rise from: over the roofs of what the player owns
 var pops: Array[Vector2] = []
 # one entry per lot (index = the file's plots[] index): "data" (the plot), "poly" (ground
 # metres), "screen" (its ground in drawing pixels), "box" (drawing pixels it and its buildings
-# cover), "active" (inside the office's radius)
+# cover), "active" (inside the office's radius), "roof" (where its income pops rise, owned lots)
 var lots: Array[Dictionary] = []
 # the highest pixel any object reaches above its ground point, for the drawing's bounds
 var tallest := 40.0
@@ -91,29 +104,50 @@ func build() -> void:
 	var office: String = _block.get("office_plot", "")
 	var has_office := false
 	var plots: Array = _block["plots"]
+	lot_ground.resize(plots.size())
+	lot_shadows.resize(plots.size())
 	for i in plots.size():
 		var plot: Dictionary = plots[i]
 		var poly := _pts(plot["poly"])
 		var c := Iso.centroid(poly)
 		lots.append({"data": plot, "poly": poly, "screen": iso.poly(poly),
 			"active": active <= 0.0 or c.length() <= active})
-		_lot_now = i
-		_lot_fade = 0 if lots[i]["active"] else 1
-		if plot["id"] == office:
-			_develop_office(plot, poly)
-			has_office = true
-		else:
-			_develop(plot, poly)
-		_lot_now = -1
-		_lot_fade = -1
+		_lay_out(i)
+		has_office = has_office or plot["id"] == office
 	if not has_office:
 		_kiosk()
 	_trees()
 	_street_furniture()
 	_cars()
-	_tags()
+	if tags:
+		_tags()
 	_ring()
 	_lot_boxes()
+
+
+# one lot's ground, shadows and objects, recorded under its index
+func _lay_out(i: int) -> void:
+	var plot: Dictionary = lots[i]["data"]
+	var poly: PackedVector2Array = lots[i]["poly"]
+	lot_ground[i] = []
+	lot_shadows[i] = []
+	lots[i].erase("roof")
+	_lot_now = i
+	_lot_fade = 0 if lots[i]["active"] else 1
+	if plot["id"] == _block.get("office_plot", ""):
+		_develop_office(plot, poly)
+	else:
+		_develop(plot, poly)
+	_lot_now = -1
+	_lot_fade = -1
+
+
+# throws away what lot i shows and lays it out again from its plot (bought, built, works
+# started or done); its new objects go at the end of `objects`, so the caller re-sorts
+func rebuild_lot(i: int) -> void:
+	objects = objects.filter(func(o: Dictionary) -> bool: return o["lot"] != i)
+	_lay_out(i)
+	_lot_box(i)
 
 
 # the top of the tallest thing in a lot of this tier, in pixels
@@ -144,19 +178,25 @@ static func _sky_floors(levels: int) -> int:
 
 # --- ground --------------------------------------------------------------------------------------
 
+# where ground ops go: the lot being laid out keeps its own
+func _gsink() -> Array:
+	return lot_ground[_lot_now] if _lot_now >= 0 else ground
+
+
 func _g_poly(poly: PackedVector2Array, name: String) -> void:
 	var pts := iso.poly(poly)
 	if pts.size() >= 3 and not Geometry2D.triangulate_polygon(pts).is_empty():
-		ground.append([Painter.OP_POLY, pts, Pal.i(name)])
+		_gsink().append([Painter.OP_POLY, pts, Pal.i(name)])
 
 
 func _g_dot(at: Vector2, name: String) -> void:
-	ground.append([Painter.OP_RECT, Rect2(at, Vector2.ONE), Pal.i(name)])
+	_gsink().append([Painter.OP_RECT, Rect2(at, Vector2.ONE), Pal.i(name)])
 
 
 func _g_line(a: Vector2, b: Vector2, name: String) -> void:
+	var sink := _gsink()
 	for r in Painter.line_runs(iso.pv(a), iso.pv(b)):
-		ground.append([Painter.OP_RECT, r, Pal.i(name)])
+		sink.append([Painter.OP_RECT, r, Pal.i(name)])
 
 
 func _ground_base() -> void:
@@ -430,14 +470,15 @@ func _ops_box(ops: Array) -> Rect2:
 func _shadow(foot: PackedVector2Array, h: float) -> void:
 	var by := Vector2(0.33, 0.20) * h
 	var ring := Iso.clean(foot)
-	shadows.append(iso.poly(ring))
-	shadows.append(iso.poly(Iso.moved(ring, by)))
+	var sink: Array = lot_shadows[_lot_now] if _lot_now >= 0 else shadows
+	sink.append(iso.poly(ring))
+	sink.append(iso.poly(Iso.moved(ring, by)))
 	for i in ring.size():
 		var a := ring[i]
 		var b := ring[(i + 1) % ring.size()]
 		var q := PackedVector2Array([a, b, b + by, a + by])
 		if absf(Geo.area(q)) > 0.01:
-			shadows.append(iso.poly(Iso.clean(q)))
+			sink.append(iso.poly(Iso.clean(q)))
 
 
 # --- buildings -----------------------------------------------------------------------------------
@@ -449,11 +490,14 @@ func _develop(plot: Dictionary, poly: PackedVector2Array) -> void:
 	var zone: String = plot["zone"]
 	var owned: bool = plot.get("owned", false)
 	var levels := int(plot.get("levels", 4))
+	if plot.has("works"):
+		_works(plot, poly, int(plot["works"]))
+		return
 	if tier <= 0:
 		_lot(plot, poly)
 		return
 	if owned:
-		pops.append(iso.pv(Iso.centroid(poly), top_of(tier, levels)))
+		_roof(iso.pv(Iso.centroid(poly), top_of(tier, levels)))
 	if zone == "industrial" and tier <= 2:
 		_g_poly(poly, "PAVE_S")
 		for s: Dictionary in _sites(plot, poly, SHED_DEPTH, SHED_FRONT):
@@ -500,27 +544,148 @@ func _develop(plot: Dictionary, poly: PackedVector2Array) -> void:
 			_scatter(poly, id + "p", PLAZA_TREE, built)
 
 
-# the player's office lot: apartment blocks round a courtyard, the REALTOR building on the site
-# nearest the clicked point
+# the player's office lot: apartment blocks round a courtyard (owned colours) and the modest
+# office building on a site near the clicked point
 func _develop_office(plot: Dictionary, poly: PackedVector2Array) -> void:
 	_g_poly(poly, "GRASS")
 	var built := _apartments(plot, poly, true, "office")
 	_scatter(poly, plot["id"] + "g", GARDEN_TREE, built)
 
 
+# --- building sites ------------------------------------------------------------------------------
+
+# a lot being built up to tier `to`: bare earth inside a fence, each new building's footprint as
+# the concrete floors already standing under a skeleton of the floors to come, scaffolding on the
+# faces the camera sees (the mockup's construction), and a tower crane for blocks and taller
+func _works(plot: Dictionary, poly: PackedVector2Array, to: int) -> void:
+	var id: String = plot["id"]
+	var zone: String = plot["zone"]
+	var lv := BlockBaker.levels_for(id, to)
+	_g_poly(poly, "DIRT")
+	for i in poly.size():
+		var a := poly[i]
+		var b := poly[(i + 1) % poly.size()]
+		var m := int(a.distance_to(b) / 2.0)
+		for j in m + 1:
+			_g_dot(iso.pv(a.lerp(b, float(j) / maxi(1, m))), "WOOD")
+	var feet: Array[PackedVector2Array] = []
+	var goal := 0.0
+	if zone == "industrial" and to <= 2:
+		for st: Dictionary in _sites(plot, poly, SHED_DEPTH, SHED_FRONT):
+			feet.append(Iso.offset(Iso.clean(st["poly"]), -1.0))
+		goal = 13.0
+	elif to <= 2:
+		for st: Dictionary in _sites(plot, poly, SITE_DEPTH[to], SITE_FRONT[to]):
+			var rect := Iso.min_rect(Iso.offset(Iso.clean(st["poly"]), -1.6), 0.8)
+			if rect.size() >= 4:
+				feet.append(_cap_rect(rect, 11.0 if to == 1 else 14.0, 8.0 if to == 1 else 10.0))
+		goal = 11.0 if to == 1 else 16.0
+	elif to == 3:
+		for st: Dictionary in _sites(plot, poly, SITE_DEPTH[3], SITE_FRONT[3]):
+			feet.append(Iso.offset(Iso.clean(st["poly"]), -0.8))
+		goal = _apt_top(lv)
+	elif to == 4:
+		var n := clampi(int(Iso.area(poly) / 1900.0), 1, 3)
+		var half := clampf(sqrt(Iso.area(poly)) * 0.13, 6.0, 9.0)
+		for at in _spots(poly, n, half, id):
+			feet.append(Iso.offset(Iso.square(at, half), -1.2))
+		goal = 5.0 + _tower_floors(lv) * 3.0 + 2.0
+	else:
+		var half := clampf(sqrt(Iso.area(poly)) * 0.18, 8.0, 13.0)
+		var spots := _spots(poly, 1, half, id, true)
+		if not spots.is_empty():
+			feet.append(Iso.offset(Iso.square(spots[0], half), -1.0))
+		goal = PODIUM_Z + 6.0 + _sky_floors(lv) * 3.0 + 3.0
+	var con := Pal.ramp_of("CON")
+	var up := 0.0
+	for k in feet.size():
+		var foot := Iso.clean(feet[k])
+		if foot.size() < 3 or Iso.area(foot) < 4.0:
+			continue
+		var h0 := floorf(goal * 0.35)
+		var h1 := maxf(h0 + 4.0, floorf(goal * 0.7))
+		_object("%s_w%d" % [id, k], foot)
+		_pt.prism(foot, 0.0, h0, WorldShader.STYLE_PLAIN, con, con, false)
+		_open_walls(foot, h0, h1, WorldShader.STYLE_SKELETON, 0.0)
+		_open_walls(foot, 0.0, h1 - 2.0, WorldShader.STYLE_SCAFFOLD, 0.9)
+		_close(h1)
+		up = maxf(up, h1)
+	var c := Iso.centroid(poly)
+	if to >= 3 and up > 0.0:
+		var far := poly[0]
+		for q in poly:
+			if Iso.depth(q) < Iso.depth(far):
+				far = q
+		_crane(id, c.lerp(far, 0.45), up)
+	_roof(iso.pv(c, up + 6.0))
+	tallest = maxf(tallest, up + 30.0)
+
+
+# see-through walls (skeleton or scaffolding) on the faces the camera sees, `out` metres out from
+# the footprint; no ink silhouette, it would fill the gaps
+func _open_walls(foot: PackedVector2Array, z0: float, z1: float, style: int, out: float) -> void:
+	for i in foot.size():
+		var a := foot[i]
+		var b := foot[(i + 1) % foot.size()]
+		var nrm := Vector2(-(b.y - a.y), -(b.x - a.x)).normalized()
+		if nrm.x + nrm.y <= 1e-3:
+			continue
+		var push := Vector2(nrm.x, -nrm.y) * out
+		var k := maxi(1, Iso.shade(Vector3(nrm.x, nrm.y, 0.0)))
+		_pt.wall(a + push, b + push, z0, z1, style, k, 0, 0, false, true)
+
+
+# the mockup's tower crane: a gold lattice mast, a jib with its counterweight and cab, a hook on
+# a line with a beam hanging from it
+func _crane(id: String, at: Vector2, top: float) -> void:
+	_object("crane" + id, Iso.square(at, 0.6), true, false)
+	var base := iso.pi(at.x, at.y)
+	var x := base.x
+	var y := base.y
+	var ch := int(top + 26.0)
+	for k in ch:
+		_pt.dot(Vector2(x, y - k), Pal.i("GOLD") if k % 3 else Pal.i("GOLD_M"))
+		_pt.dot(Vector2(x + 1, y - k), Pal.i("GOLD_M") if k % 3 else Pal.i("WOOD"))
+		if k % 3 == 1:
+			_pt.dot(Vector2(x + (k / 3) % 2, y - k), Pal.i("INK"))
+	var jy := y - ch
+	_pt.block(Rect2(x - 12, jy, 38, 1), Pal.i("GOLD"))
+	for dx in range(-12, 26):
+		_pt.dot(Vector2(x + dx, jy + 1), Pal.i("GOLD_M") if dx % 3 else Pal.i("INK"))
+	_pt.block(Rect2(x - 12, jy + 2, 6, 2), Pal.i("STN2"))
+	_pt.block(Rect2(x - 12, jy + 4, 6, 1), Pal.i("STN3"))
+	_pt.block(Rect2(x, jy - 1, 2, 1), Pal.i("GOLD"))
+	_pt.dot(Vector2(x, jy - 2), Pal.i("GOLD_M"))
+	_pt.block(Rect2(x - 2, jy + 2, 5, 3), Pal.i("CYAN_M"))
+	_pt.dot(Vector2(x - 1, jy + 3), Pal.i("CYAN"))
+	var hx := x + 18
+	_pt.block(Rect2(hx, jy + 2, 1, 16), Pal.i("SL2"))
+	_pt.dot(Vector2(hx, jy + 18), Pal.i("GOLD"))
+	_pt.dot(Vector2(hx - 1, jy + 18), Pal.i("GOLD_M"))
+	_pt.dot(Vector2(hx - 1, jy + 19), Pal.i("GOLD_M"))
+	_pt.block(Rect2(hx - 3, jy + 20, 7, 1), Pal.i("CON2"))
+	_close(0.0)
+	tallest = maxf(tallest, ch + 4.0)
+
+
 # apartment blocks on the lot's street sites, each its own height and facade, so a lot reads
-# as a row of buildings; `office` puts the office on the site nearest (0, 0) instead
+# as a row of buildings; `office` puts the office on a site near (0, 0) instead
 func _apartments(plot: Dictionary, poly: PackedVector2Array, owned: bool,
 		office: String) -> Array[PackedVector2Array]:
 	var levels := int(plot.get("levels", 5))
 	var sites := _sites(plot, poly, SITE_DEPTH[3], SITE_FRONT[3])
 	var mine := -1
 	if office != "":
-		var best := INF
+		# the office takes a site near the clicked point, the one nearest the viewer among them,
+		# so the lot's taller blocks do not hide it
+		var near := INF
 		for k in sites.size():
-			var d := Iso.centroid(sites[k]["poly"]).length()
-			if d < best:
-				best = d
+			near = minf(near, Iso.centroid(sites[k]["poly"]).length())
+		var best := -INF
+		for k in sites.size():
+			var c := Iso.centroid(sites[k]["poly"])
+			if c.length() <= near + OFFICE_NEAR and Iso.depth(c) > best:
+				best = Iso.depth(c)
 				mine = k
 	var built: Array[PackedVector2Array] = []
 	for k in sites.size():
@@ -540,7 +705,7 @@ func _apartments(plot: Dictionary, poly: PackedVector2Array, owned: bool,
 		_close(hz)
 		tallest = maxf(tallest, hz + 16.0)
 	if owned and office == "":
-		pops.append(iso.pv(Iso.centroid(poly), _apt_top(levels + 1)))
+		_roof(iso.pv(Iso.centroid(poly), _apt_top(levels + 1)))
 	return built
 
 
@@ -700,6 +865,13 @@ func _lot(plot: Dictionary, poly: PackedVector2Array) -> void:
 		if Iso.depth(q) > Iso.depth(front):
 			front = q
 	var at := c.lerp(front, 0.5)
+	# a solar the player owns flies his flag instead of the sale sign
+	if plot.get("owned", false):
+		_object("own" + id, Iso.square(at, 0.4), true, false)
+		_pt.tex("flag:9:cyan", iso.pv(at))
+		_close(0.0)
+		_roof(iso.pv(at, 10.0))
+		return
 	_object("sale" + id, Iso.square(at, 0.4), true, false)
 	_pt.tex("sale", iso.pv(at))
 	_close(0.0)
@@ -709,15 +881,34 @@ func _lot(plot: Dictionary, poly: PackedVector2Array) -> void:
 # each lot's box in the drawing: its ground and everything standing on it
 func _lot_boxes() -> void:
 	for i in lots.size():
-		var pts: PackedVector2Array = lots[i]["screen"]
-		var box := Rect2(pts[0], Vector2.ZERO) if not pts.is_empty() else Rect2()
-		for q in pts:
-			box = box.expand(q)
-		lots[i]["box"] = box
+		lots[i]["box"] = _ground_box(i)
 	for obj: Dictionary in objects:
 		var k: int = obj["lot"]
 		if k >= 0:
 			lots[k]["box"] = (lots[k]["box"] as Rect2).merge(obj["rect"])
+
+
+func _lot_box(i: int) -> void:
+	var box := _ground_box(i)
+	for obj: Dictionary in objects:
+		if obj["lot"] == i:
+			box = box.merge(obj["rect"])
+	lots[i]["box"] = box
+
+
+func _ground_box(i: int) -> Rect2:
+	var pts: PackedVector2Array = lots[i]["screen"]
+	var box := Rect2(pts[0], Vector2.ZERO) if not pts.is_empty() else Rect2()
+	for q in pts:
+		box = box.expand(q)
+	return box
+
+
+# where an owned lot's income pops rise
+func _roof(at: Vector2) -> void:
+	pops.append(at)
+	if _lot_now >= 0:
+		lots[_lot_now]["roof"] = at
 
 
 func _shed(id: String, poly: PackedVector2Array, owned: bool) -> void:
@@ -926,30 +1117,34 @@ func _roof_props(id: String, g: PackedVector2Array, hz: float, owned: bool, mode
 		_pt.tex("flag:7:cyan", iso.pv(far, hz))
 
 
-# the player's office: stone, a cyan shop front, a teal roof, the REALTOR sign and a flag
+# the player's office: a modest three-storey building on its site (capped in size, so it reads
+# as one office among ordinary blocks), a cyan shop front, a teal roof, a small REALTOR plate on
+# the roof and a flag
 func _office_at(id: String, poly: PackedVector2Array) -> void:
-	var hz := 7.0 + 5.0 * 5.0 + 2.0
-	_object(id, poly)
-	_pt.prism(poly, 0.0, hz, WorldShader.STYLE_OFFICE, Pal.ramp_of("STN"), Pal.ramp_of("TEAL"))
-	var c := Iso.centroid(poly)
-	_pt.tex("billboard", iso.pv(c, hz))
-	var sign := Sprites.get_sprite("billboard")
-	keep_clear.append(Rect2(iso.pv(c, hz) + sign[1], sign[2]).grow(4.0))
-	# the flag on the leftmost corner, or on the sign when the building is too narrow for both
-	var left := poly[0]
-	var right := poly[0]
-	for q in poly:
+	var inner := Iso.offset(poly, -1.5)
+	if inner.size() < 3:
+		inner = poly
+	var foot := Iso.min_rect(inner, 0.92)
+	if foot.size() >= 4:
+		foot = _cap_rect(foot, OFFICE_SIZE.x, OFFICE_SIZE.y)
+	else:
+		foot = inner
+	var hz := 7.0 + 5.0 * 2.0 + 2.0
+	_object(id, foot)
+	_pt.prism(foot, 0.0, hz, WorldShader.STYLE_OFFICE, Pal.ramp_of("STN"), Pal.ramp_of("TEAL"))
+	var c := Iso.centroid(foot)
+	var at := iso.pv(c, hz)
+	_pt.tex("plate", at)
+	var sign := Sprites.get_sprite("plate")
+	keep_clear.append(Rect2(at + sign[1], sign[2]).grow(4.0))
+	var left := foot[0]
+	for q in foot:
 		if q.x + q.y < left.x + left.y:
 			left = q
-		if q.x + q.y > right.x + right.y:
-			right = q
-	if iso.pv(right).x - iso.pv(left).x > 56.0:
-		_pt.tex("flag:9:cyan", iso.pv(left + (c - left).normalized() * 1.2, hz))
-	else:
-		_pt.tex("flag:7:cyan", iso.pv(c, hz) + Vector2(17, -20))
-	pops.append(iso.pv(c, hz + 24.0))
+	_pt.tex("flag:7:cyan", iso.pv(left + (c - left).normalized() * 1.0, hz))
+	_roof(iso.pv(c, hz + 14.0))
 	_close(hz)
-	tallest = maxf(tallest, hz + 30.0)
+	tallest = maxf(tallest, hz + 16.0)
 
 
 # when the clicked spot has no plot near it, a small office stands on the pavement
@@ -968,12 +1163,12 @@ func _tree(at: Vector2, seed: String, big: bool) -> void:
 
 func _trees() -> void:
 	for c: Dictionary in _block["courts"]:
-		_scatter(_pts(c["poly"]), "c%d" % objects.size(), 80.0)
+		_scatter(_pts(c["poly"]), "c%d" % _block["courts"].find(c), 80.0)
 	for g: Dictionary in _block["greens"]:
 		var kind: String = g["kind"]
 		if kind in ["pitch", "sand", "beach", "golf_course"]:
 			continue
-		_scatter(_pts(g["poly"]), "g" + kind + str(objects.size()),
+		_scatter(_pts(g["poly"]), "g" + kind + str(_block["greens"].find(g)),
 			45.0 if kind in DENSE_TREES else 120.0)
 	# plane trees down the pavements, one every few metres, not in the corners
 	for b: Dictionary in _block["blocks"]:

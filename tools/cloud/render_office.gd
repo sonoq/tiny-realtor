@@ -8,6 +8,10 @@ extends SceneTree
 # casas, urbanizacion, bloque, torres, rascacielos, then industrial sheds and the office's own
 # lot), each cropped at x2 with its lot outlined in gold and its name under it; those tiers are
 # set for the sheet, the area's real ones are in <id>_full.png.
+# With --redraw it checks the game's one-lot redraws: four lots near the office are bought,
+# rebuilt and put into works one by one through BlockView.redraw_lot, and the result must match
+# a fresh full drawing of the same area (<id>_redraw.png: before | after, at x2); it prints how
+# long each redraw kept the main thread busy.
 # For looking at the art quickly; needs a display (xvfb-run, see screenshot.sh).
 #
 #   godot --path . --rendering-driver opengl3 --audio-driver Dummy \
@@ -20,11 +24,15 @@ const SHEET_NAMES: Array[String] = ["0 SOLAR", "1 CASAS", "2 URBANIZACION", "3 B
 	"4 TORRES", "5 RASCACIELOS", "NAVES INDUSTRIAL", "TU OFICINA"]
 
 var _out := "user://renders"
+# pixels a lot redraw may differ from a fresh drawing (painter's order of a few overlapping
+# objects can tie differently when only some of them are sorted)
+const REDRAW_SLACK := 400
 
 
 func _init() -> void:
 	var files: Array[String] = []
 	var tiers := false
+	var redraw := false
 	for arg: String in OS.get_cmdline_user_args():
 		if arg.begins_with("--out="):
 			_out = arg.substr(6)
@@ -32,6 +40,8 @@ func _init() -> void:
 			files.append(arg.substr(7))
 		elif arg == "--tiers":
 			tiers = true
+		elif arg == "--redraw":
+			redraw = true
 	if files.is_empty():
 		for o: Dictionary in Store.offices():
 			files.append(ProjectSettings.globalize_path(Store.office_path(o["id"])))
@@ -72,6 +82,9 @@ func _init() -> void:
 			return
 		view.queue_free()
 		if tiers and not await _tiers(block, id):
+			quit(1)
+			return
+		if redraw and not await _redraw(block, id):
 			quit(1)
 			return
 	quit(0)
@@ -144,6 +157,74 @@ func _tiers(block: Dictionary, id: String) -> bool:
 	print("RENDER %s tiers sheet, %d pixels off the palette" % [id, off])
 	view.queue_free()
 	return off == 0
+
+
+# the game's lot redraws against a fresh drawing of the same changes
+func _redraw(block: Dictionary, id: String) -> bool:
+	var area: Dictionary = block.duplicate(true)
+	var lots: Array = area["plots"]
+	var order: Array[int] = []
+	for i in lots.size():
+		var c := Iso.centroid(AreaBuilder._pts(lots[i]["poly"]))
+		if lots[i]["id"] != area["office_plot"] and c.length() < 140.0:
+			order.append(i)
+	order.sort_custom(func(a: int, b: int) -> bool:
+		return Iso.centroid(AreaBuilder._pts(lots[a]["poly"])).length() \
+			< Iso.centroid(AreaBuilder._pts(lots[b]["poly"])).length())
+	if order.size() < 4:
+		printerr("RENDER FAILED: not enough lots near the office to redraw")
+		return false
+	var view := BlockView.new()
+	view.live = true
+	view.active_radius = Rules.active_radius(1)
+	view.set_block(area)
+	root.add_child(view)
+	await view.drawn
+	var before := view.texture.get_image()
+	# bought as it stands; two tiers up; works toward torres; works on the next tier
+	var changes: Array = [[order[0], -1, false], [order[1], 2, false], [order[2], 4, true],
+		[order[3], 1, true]]
+	for ch: Array in changes:
+		var plot: Dictionary = lots[ch[0]]
+		plot["owned"] = true
+		var t := int(plot["built_tier"])
+		if ch[2]:
+			plot["works"] = mini(5, t + int(ch[1])) if int(ch[1]) < 4 else maxi(t + 1, 4)
+		elif int(ch[1]) > 0:
+			plot["built_tier"] = mini(5, t + int(ch[1]))
+			plot["levels"] = BlockBaker.levels_for(plot["id"], int(plot["built_tier"]))
+		view.redraw_lot(ch[0])
+		await view.redrawn
+		print("RENDER %s redraw lot %s: %dx%d px, main thread %d ms, on screen after %d ms" % [
+			id, plot["id"], view.redraw_px.x, view.redraw_px.y, view.redraw_ms,
+			view.redraw_wall_ms])
+	var after := view.texture.get_image()
+	var fresh_view := BlockView.new()
+	fresh_view.live = true
+	fresh_view.active_radius = Rules.active_radius(1)
+	fresh_view.set_block(area)
+	root.add_child(fresh_view)
+	await fresh_view.drawn
+	var fresh := fresh_view.texture.get_image()
+	var diff := 0
+	var a := after.get_data()
+	var b := fresh.get_data()
+	for i in range(0, a.size(), 4):
+		if a[i] != b[i] or a[i + 1] != b[i + 1] or a[i + 2] != b[i + 2] or a[i + 3] != b[i + 3]:
+			diff += 1
+	var half := Vector2i(150, 150)
+	var at := Vector2i(view.focus) - half + Vector2i(0, -20)
+	var sheet := Image.create(1200, 600, false, Image.FORMAT_RGBA8)
+	for k in 2:
+		var crop := (before if k == 0 else after).get_region(Rect2i(at, half * 2))
+		crop.resize(600, 600, Image.INTERPOLATE_NEAREST)
+		sheet.blit_rect(crop, Rect2i(0, 0, 600, 600), Vector2i(k * 600, 0))
+	sheet.save_png("%s/%s_redraw.png" % [_out, id])
+	print("RENDER %s redraws vs a fresh drawing: %d pixels differ, %d off the palette" % [id,
+		diff, _off_palette(after)])
+	view.queue_free()
+	fresh_view.queue_free()
+	return diff <= REDRAW_SLACK and _off_palette(after) == 0
 
 
 # micro-font text into an image, each font pixel 4x4
