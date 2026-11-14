@@ -339,7 +339,11 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   facade shader (walls per pixel: apartment, office, house, tower (glass by variant), sky
   (glass in its ramp), ribbon, grid, plain, skeleton, scaffold, slab, cab, shed, ink; sprites from the atlas) and the ground shader.
 - `depth_sort.gd` (`DepthSort`) - painter's order: separating axis between footprint hulls for
-  every pair whose screen boxes overlap, then a topological sort (fixes long thin plots).
+  every pair whose screen boxes overlap, then a topological sort (fixes long thin plots). Where
+  the rules go round in a circle the farthest object left goes next and the sort carries on,
+  so a circle only reorders itself: a lot redraw (which sorts only the objects round the lot)
+  then agrees with a fresh drawing; the old fallback (everything left sorted by centre) let a
+  circle closed by a new building reorder hundreds of far trees and lamps.
 - `pal.gd` (`Pal`), `iso.gd` (`Iso`), `sprites.gd` (`Sprites`) - see "Style A".
 - `docs/prototype/` - the Python prototype (Pillow + Shapely); its `block_raw_overpass.json` is
   the hand-made Eixample sample the fixture uses. Not shipped.
@@ -355,8 +359,10 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   (`_trim_at`). Junctions are crossed on **connectors**, cubic curves from lane end to lane
   start, bent round the lanes' corner, re-routed via the junction when they would leave the
   asphalt, made lazily (`connector(a, b)`); `conflict(c1, c2)` = they pass within 2.4 m (two
-  from the same lane never conflict). `choose()` picks the next lane: no U-turn unless a dead
-  end, no hairpins or "rough" curves, avenues and straight on preferred. A one-way street with
+  from the same lane never conflict); `conflict_end(c1, c2)` = how far along c1 that ends (a car
+  past it is out of c2's way). `choose()` picks the next lane: no U-turn unless a dead
+  end, no hairpins or "rough" curves, avenues and straight on preferred, lanes already full of
+  cars avoided (Traffic's per-lane `load`, `JAM_M` m a car). A one-way street with
   no way out is never chosen; at the disc's edge a street with no way on is an exit (the car
   drives off the world). Lanes and connectors are "paths" (polyline + running
   length) in one index space, lanes first; `CRUISE` / `DENSITY` / `PULL` per street kind.
@@ -367,12 +373,25 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   the car ahead on the path / next two paths, `_sense` for cars ahead on other paths where
   streets merge), then everyone moves. Junctions: a car within `LOOK` of its kerb line asks
   (every 3rd tick) for its connector: never before the car in front on its lane, nothing
-  standing along it (`_swept_clear`; while something does the car is `held` and the others do
-  not give way to it), clear of every reserved conflicting connector, nobody free to go
-  waiting longer for a conflicting one, room on the street beyond; when that street is too
-  short to wait on, the next junction is reserved in the same go (`nxt2`); a car held up by
-  the car in front on its lane is `held` too. Safeguards (`_would_hit`, `_into_way`) keep footprints apart in odd
-  geometry; who waits for whose junction decides who gives way, so it never deadlocks.
+  along it (`_swept`: a car standing there makes it `held` and the others do not give way to
+  it; one driving by does not; one on the street beyond is `_room`'s business), clear of
+  every reserved conflicting connector (a car past where the two meet, `conflict_end`, no
+  longer counts), nobody free to go waiting longer for a conflicting one, room on the street
+  beyond; when that street is shorter than the car + 1 m, the next junction is reserved in the
+  same go (`nxt2`), and only when that short street is empty and nobody heads into it
+  (`_via_free`; while not, the car is not `held`); a car held up by the car in front on its
+  lane is `held` too. Waiters and reservations are listed per junction (`_node_wait`,
+  `_node_res`). **Fair turns**: a car right behind one that just got the same way follows it
+  in the same go (`FOLLOW` m, up to `TRAIN` cars, room for all of them); a car whose way fits
+  with the one crossing may go before an older waiter that one holds up (`_crossed`) until
+  that waiter has waited `PASS_MAX` (35 s); at **odd junctions**, where a way across crosses
+  the end of another lane (`_mark_odd`, e.g. a street that joins inside the avenue's queue
+  after a node merge), the cars on that lane stop short of the way of a car that has waited
+  longer or is crossing now (`_keep_clear`, geometry cached by `_tail`: where the way crosses
+  the lane, where it leaves it), wait there (`kept`), and give way to it in turn (`_clear`'s
+  tail rule); elsewhere none of this runs. Safeguards (`_would_hit`, `_into_way`) keep
+  footprints apart in odd geometry; who waits for whose junction decides who gives way, so it
+  never deadlocks.
   Cars gather around the view (`set_view`): the target count is the lanes' density within
   reach of the view's corners; a car far out of reach (or stuck 40 s) and out of sight is
   removed, new ones start out of sight on lanes near the view (`populate()` fills and settles
@@ -415,7 +434,9 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   other's new place), turn back when held up `STUCK_TURN` s. At a crossing they wait
   `WAIT_BACK` before the kerb and step out (`busy`) only when no car is on it, none is coming
   too fast to stop gently, none has its junction (`granted`) or has waited `CAR_TURN` s on its
-  way through it; on it they never wait for a car; they give up after `PATIENCE` s. Gather
+  way through it (and for `CAR_PHASE` after that, none waiting just behind it, so a queue of
+  cars gets through in one go); on it they never wait for a car; they give up after
+  `PATIENCE` s. Gather
   round the view like the cars (`DENSITY` per 100 m of walkway within `REGION` of Traffic's
   reach), one seeded RNG per office.
 - `walker_sprites.gd` (`WalkerSprites`) - the people: a one-pixel column of shoes, trousers,
@@ -522,7 +543,7 @@ bash tools/cloud/setup.sh                         # fresh container: Godot 4.7.1
 godot --headless --path . --import                # after adding/renaming files
 godot --headless --path . --quit-after 300        # boots main.tscn for 300 frames
 godot --headless --path . --script res://tools/bake_check.gd   # bakes fixtures, checks lots
-godot --headless --path . --script res://tools/traffic_check.gd # 10 simulated min of traffic
+godot --headless --path . --script res://tools/traffic_check.gd # 5 seeds x 6 min on 4 areas
 godot --headless --path . --script res://tools/walker_check.gd  # 5 simulated min of walkers
 godot --headless --path . --script res://tools/game_check.gd   # the game's rules, saves, bank
 godot --headless --path . --script res://tools/econ_sim.gd     # pacing table + bank promises
@@ -619,10 +640,18 @@ plays kinds of player and prints milestones and snapshots (fixture area by defau
 if any player ever has interest above the cap or debt that does not shrink with autopay. `docs/screenshots/style_a_side_by_side.png` is the mockup next to the
 real Barcelona office.
 
-Traffic: `traffic_check.gd [-- --file=/abs/office.json] [--minutes=10]` runs the three fixture
-areas (and any saved office) headless with the window as the game opens it and fails when a
-car leaves the street, two cars stand on each other (middles < 2 m), a car stands still over
-120 s, the traffic hardly moves, or one seed plays differently twice (~25 s). The capture ends
+Traffic: `traffic_check.gd [-- --file=/abs/office.json] [--minutes=6] [--seeds=5]` runs the
+three fixture areas, the real Valencia sample and any saved office headless with the window as
+the game opens it, each on 5 seeds (the office id, then `id#1`..), and fails when a car leaves
+the street, two cars stand on each other (middles < 2 m), a car stands still over 60 s
+(`WAIT_MAX`), the traffic hardly moves, two seeds play the same or one seed plays differently
+twice (~2 min); it prints the longest wait per seed. `tools/check_areas.gd` (preloaded, no
+class_name) gives both checks their areas: the fixtures and `tools/data/valencia_overpass.json`,
+a saved Overpass answer around the Gran Via de Ferran el Catolic (ODbL) baked on the spot; a
+missing sample fails the checks. `docs/screenshots/traffic/jam_fixed_valencia.gif` (and
+`.png`, one frame) is the junction where Sant Ignasi de Loiola joins the Gran Via inside its
+queue, before | after the fair turns, at x3: the side street's first car circled with its wait.
+The capture ends
 with `NN_office_traffic` (the first office again at x3 on its cars).
 `tools/cloud/traffic_frames.gd -- --file=/abs/office.json --out=/abs/dir` (xvfb-run) opens an
 office in the real game with the traffic clock stopped and stepped by hand: `gif/NNN.png` at
@@ -630,21 +659,19 @@ x2 round the busiest junction near the office (one tick apart; its header has th
 that makes `traffic.gif`), `junction_sheet.png`, `hidden.png` (a car behind a building with
 and without the depth test) and `BENCH` lines (sim ms per tick, frame times traffic off / on).
 
-Walkers: `walker_check.gd [-- --file=/abs/office.json] [--minutes=5]` runs the fixture areas
-(and any saved office) with their traffic and fails when a walker leaves the pavement (onto a
-carriageway, a lot or a garden) or its crossing, is on the road without holding the crossing,
+Walkers: `walker_check.gd [-- --file=/abs/office.json] [--minutes=5]` runs the fixture areas,
+the Valencia sample (and any saved office) with their traffic and fails when a walker leaves
+the pavement (onto a carriageway, a lot or a garden) or its crossing, is on the road without
+holding the crossing,
 two walkers' middles come within 0.3 m, a walker stands under a car, jumps (> 0.5 m a tick) or
-stands still over 60 s, a crossing stays busy over 90 s, a car waits over 60 s for people, a
-busy count is wrong, nobody crosses, or a seed plays differently (~25 s).
+stands still over 60 s, a crossing stays busy over 90 s, a car waits over 60 s for people or
+stands still over 60 s at all (`CAR_WAIT_MAX`), a busy count is wrong, nobody crosses, or a
+seed plays differently (~25 s). It drives the same areas as traffic_check (one seed).
 `tools/cloud/walker_frames.gd -- --file=/abs/office.json --out=/abs/dir [--gif=70]` (xvfb-run)
 opens an office in the real game (welcome card dismissed), saves `game_x2.png`, waits for
 someone to step onto a visible crossing near the office with people around and films
 `gif/NNN.png` at x3 one tick apart (the ffmpeg line is in its header), `walkers_sheet.png`
 (every 6th frame's middle, x2), `sprites.png` (the atlas, x6) and `BENCH` lines.
-Known: on the real Valencia area the junction at about (5, 126) m, where a side street meets
-the Gran Via's carriageway inside its queue, can starve a car for minutes; it happens without
-walkers too (traffic_check fails there with other seeds), so walker_check judges only the
-waits people cause.
 
 **Network in the cloud container**: Overpass hosts must be on the environment's allowlist. In
 this container overpass-api.de reset every TLS handshake, overpass.kumi.systems timed out and
