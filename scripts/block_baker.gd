@@ -2,21 +2,24 @@ class_name BlockBaker
 extends RefCounted
 
 # Turns one raw Overpass answer (the streets and land around an office, within its max radius)
-# into the saved area BlockView draws: format "tiny-realestate-block" v2. No real buildings are
+# into the saved area BlockView draws: format "tiny-realestate-block" v3. No real buildings are
 # used: the player builds; the map only lends the streets, their names and the parks and water.
 #   1. lat/lon -> local metres around the office (x east, y north)
 #   2. find the dominant street direction and turn everything so streets follow the iso axes
 #   3. roads (centre line, width from the tag or the class), railways, water, sea, greens
 #   4. BLOCKS: polygonize the street network (StreetGraph), cut each face back by half its
 #      streets' widths plus pavement, and take parks, water and rail land out of it
-#   5. PLOTS: each block parcelled along its frontage (Plotter); a plot knows the street it faces
-#      (its address) and its zone (from landuse); a share is pre-built by zone, so the area does
-#      not start barren, with procedural buildings of a tier (never real footprints)
-#   6. the office's plot: the one under the clicked point, else the nearest
+#   5. LOTS ("terrenos", saved as plots[]): each block is one lot, or a few when it is big, cut
+#      straight across (Plotter.split) so every lot still faces a street; a lot knows the
+#      streets it faces (its address, the sides that face them) and its zone (from landuse); a
+#      share is pre-built by zone, so the area does not start barren, with a development of a
+#      tier drawn by AreaBuilder (never real footprints); slivers become little gardens
+#   6. the office's lot: the one under the clicked point, else the nearest
+# Saved v2 areas (one small plot per building) are re-parcelled into lots by upgrade().
 # Pure data: safe to run on a worker thread.
 
 const FORMAT := "tiny-realestate-block"
-const VERSION := 2
+const VERSION := 3
 const FLOOR_M := 3.2
 const DISC_SIDES := 96
 # kerb to building line, added to half the street width when blocks are cut back
@@ -24,8 +27,13 @@ const PAVEMENT := 3.0
 const MIN_FACE := 150.0
 const MIN_BLOCK := 120.0
 const CUT_CELL := 40.0
-# how far (m) a plot's front may be from a street centre line and still take its name
-const ADDRESS_REACH := 40.0
+# a lot side faces a street when it lies within half the street's width plus the pavement plus
+# this (m) of the centre line (blocks are cut back exactly that far, give or take simplifying)
+const FRONT_TOL := 3.0
+# a block smaller than this (m2), or thinner on average than GARDEN_WIDTH (m), or facing no
+# street, is no lot: it becomes a little garden
+const GARDEN_AREA := 260.0
+const GARDEN_WIDTH := 7.0
 const ROAD_RX := "^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|" \
 	+ "living_street|pedestrian|road|busway)(_link)?$"
 const RAIL_RX := "^(rail|light_rail|narrow_gauge|subway|tram|monorail)$"
@@ -47,9 +55,9 @@ const GREEN_NATURAL := ["wood", "scrub", "grassland", "heath"]
 const SAND := ["beach", "sand"]
 const ZONES := {"residential": "residential", "commercial": "commercial", "retail": "commercial",
 	"industrial": "industrial"}
-# share of plots that start built, by zone, and how much a block may differ from it
-const BUILT := {"residential": 0.42, "commercial": 0.55, "industrial": 0.3}
-const BUILT_SPREAD := 0.4
+# share of lots that start built, by zone, and how much a block may differ from it
+const BUILT := {"residential": 0.62, "commercial": 0.7, "industrial": 0.45}
+const BUILT_SPREAD := 0.3
 # tiers from docs/DESIGN.md: 0 solar, 1 casa, 2 urbanizacion, 3 bloque, 4 torre, 5 rascacielos
 const TIER_LEVELS := [Vector2i(0, 0), Vector2i(1, 2), Vector2i(2, 3), Vector2i(4, 7),
 	Vector2i(9, 15), Vector2i(20, 35)]
@@ -188,46 +196,12 @@ static func bake(raw: Dictionary, lat0: float, lon0: float, radius: float) -> Di
 				continue
 			blocks.append({"id": "b%d" % blocks.size(), "poly": part,
 				"zone": _zone(part, zones)})
-	# --- 5. plots ---------------------------------------------------------------------------
-	var names := _road_index(roads)
-	var plots: Array[Dictionary] = []
-	var courts: Array[Dictionary] = []
-	for b in blocks:
-		var zone: String = b["zone"]
-		var bid: String = b["id"]
-		var cut := Plotter.cut(b["poly"], zone, "%s%.4f%.4f" % [bid, lat0, lon0], radius)
-		var ring: PackedVector2Array = cut["ring"]
-		for court: PackedVector2Array in cut["courts"]:
-			court = _tidy(court)
-			if not court.is_empty():
-				courts.append({"kind": "courtyard", "poly": court})
-		var density: float = BUILT[zone] + (_h01(bid + "dens") - 0.5) * BUILT_SPREAD
-		var streets := {}
-		for p: Dictionary in cut["plots"]:
-			var e: int = p["edge"]
-			if not streets.has(e):
-				var mid := (ring[e] + ring[(e + 1) % ring.size()]) * 0.5
-				streets[e] = _nearest_road(mid, names)
-			var road: Dictionary = streets[e]
-			var id := "%s_%d" % [bid, plots.size()]
-			var tier := _start_tier(id, zone, density, road.get("major", false))
-			var lv: Vector2i = TIER_LEVELS[tier]
-			var poly := _tidy(p["poly"])
-			if poly.is_empty():
-				continue
-			plots.append({"id": id, "block": bid, "poly": poly, "street": road.get("name", ""),
-				"corner": p["corner"], "zone": zone, "front_m": snappedf(p["front"], 0.1),
-				"area_m2": roundi(absf(Geo.area(poly))), "built_tier": tier,
-				"levels": lv.x + int(_h01(id + "lv") * (lv.y - lv.x + 1)), "owned": false})
-	# --- 6. the office's plot ---------------------------------------------------------------
-	var office := _office_plot(plots)
-	if office >= 0:
-		plots[office]["built_tier"] = 3
-		plots[office]["levels"] = maxi(4, int(plots[office]["levels"]))
-	var built := 0
-	for p in plots:
-		if int(p["built_tier"]) > 0:
-			built += 1
+	# --- 5. lots ----------------------------------------------------------------------------
+	var parcel := parcel(blocks, roads, radius, "%.4f%.4f" % [lat0, lon0])
+	var plots: Array[Dictionary] = parcel["lots"]
+	var courts: Array[Dictionary] = parcel["courts"]
+	var office: int = parcel["office"]
+	var built: int = parcel["built"]
 	return {
 		"format": FORMAT, "format_version": VERSION,
 		"source": "OpenStreetMap via Overpass API (streets, land use, parks, water)",
@@ -243,14 +217,12 @@ static func bake(raw: Dictionary, lat0: float, lon0: float, radius: float) -> Di
 		"water": water.map(_area_out), "land": land.map(_area_out),
 		"blocks": blocks.map(func(b: Dictionary) -> Dictionary:
 			return {"id": b["id"], "zone": b["zone"], "poly": _ring(b["poly"])}),
-		"plots": plots.map(func(p: Dictionary) -> Dictionary:
-			var out := p.duplicate()
-			out["poly"] = _ring(p["poly"])
-			return out),
+		"plots": plots.map(_lot_out),
 		"office_plot": plots[office]["id"] if office >= 0 else "",
 		"stats": {"elements": els.size(), "roads": roads.size(), "rails": rails.size(),
 			"faces": faces.size(), "blocks": blocks.size(), "plots": plots.size(),
-			"built": built, "greens": greens.size(), "water": water.size(),
+			"lots": plots.size(), "built": built, "greens": greens.size(),
+			"water": water.size(),
 			"graph_ms": t_graph, "bake_ms": Time.get_ticks_msec() - t0},
 	}
 
@@ -479,7 +451,7 @@ static func _zone(poly: PackedVector2Array, zones: Array[Dictionary]) -> String:
 	return "residential"
 
 
-# street segments in 50 m cells, for naming each plot after the street in front of it
+# street segments in 50 m cells, for finding the streets in front of each lot
 static func _road_index(roads: Array[Dictionary]) -> Dictionary:
 	var cells := {}
 	for r in roads:
@@ -501,26 +473,125 @@ static func _road_index(roads: Array[Dictionary]) -> Dictionary:
 	return cells
 
 
-# the nearest street with a name (falling back to its ref, e.g. a motorway number)
-static func _nearest_road(p: Vector2, cells: Dictionary) -> Dictionary:
-	var best := {}
-	var best_d := ADDRESS_REACH
+# blocks -> lots and gardens, shared by bake() and upgrade(); blocks as {id, zone, poly} and
+# roads as {name, ref, kind, width, line, major} in local metres; `key` seeds the hashes
+static func parcel(blocks: Array[Dictionary], roads: Array[Dictionary], radius: float,
+		key: String) -> Dictionary:
+	var names := _road_index(roads)
+	var lots: Array[Dictionary] = []
+	var courts: Array[Dictionary] = []
+	var fronts := func(poly: PackedVector2Array) -> Dictionary:
+		return _frontage(poly, names, radius)
+	for b in blocks:
+		var zone: String = b["zone"]
+		var bid: String = b["id"]
+		var poly: PackedVector2Array = b["poly"]
+		var area := absf(Geo.area(poly))
+		if area < GARDEN_AREA or 2.0 * area / _perimeter(poly) < GARDEN_WIDTH \
+				or float(fronts.call(Plotter.ring_of(poly))["length"]) < Plotter.FRONT_MIN * 0.6:
+			courts.append({"kind": "garden", "poly": poly})
+			continue
+		var density: float = BUILT[zone] + (_h01(bid + "dens") - 0.5) * BUILT_SPREAD
+		for piece in Plotter.split(poly, bid + key, fronts):
+			var lot := _tidy(piece)
+			if lot.is_empty():
+				continue
+			if Geo.area(lot) < 0.0:
+				lot.reverse()
+			var face := _frontage(lot, names, radius)
+			var id := "%s_%d" % [bid, lots.size()]
+			var tier := _start_tier(id, zone, density, face["major"])
+			var lv: Vector2i = TIER_LEVELS[tier]
+			var streets: Array = face["streets"]
+			lots.append({"id": id, "block": bid, "poly": lot,
+				"street": streets[0] if not streets.is_empty() else "", "streets": streets,
+				"corner": face["corner"], "fronts": face["fronts"], "zone": zone,
+				"front_m": snappedf(face["length"], 0.1), "area_m2": roundi(absf(Geo.area(lot))),
+				"built_tier": tier, "levels": lv.x + int(_h01(id + "lv") * (lv.y - lv.x + 1)),
+				"owned": false})
+	var office := _office_plot(lots)
+	if office >= 0:
+		lots[office]["built_tier"] = 3
+		lots[office]["levels"] = maxi(5, int(lots[office]["levels"]))
+	var built := 0
+	for p in lots:
+		if int(p["built_tier"]) > 0:
+			built += 1
+	return {"lots": lots, "courts": courts, "office": office, "built": built}
+
+
+# which sides of a lot face a street: {"fronts": side indices, "length": metres of street front,
+# "streets": names by frontage (most first), "corner": faces streets at an angle, "major": faces
+# a main street, "dir": the way its longest street side runs}; a side on the disc's rim, a park
+# or a rail line faces none
+static func _frontage(poly: PackedVector2Array, cells: Dictionary, radius: float) -> Dictionary:
+	var fronts: Array = []
+	var by_name := {}
+	var length := 0.0
+	var major := false
+	var dirs: Array[Vector2] = []
+	var longest := 0.0
+	var dir := Vector2.ZERO
+	var n := poly.size()
+	for i in n:
+		var a := poly[i]
+		var b := poly[(i + 1) % n]
+		var side := a.distance_to(b)
+		if side < 1.0 or (a.length() > radius - 2.0 and b.length() > radius - 2.0):
+			continue
+		# the middle and one more of three points along the side must be at a kerb
+		var road := _street_at(a.lerp(b, 0.5), cells)
+		if road.is_empty() or (_street_at(a.lerp(b, 0.2), cells).is_empty()
+				and _street_at(a.lerp(b, 0.8), cells).is_empty()):
+			continue
+		fronts.append(i)
+		length += side
+		dirs.append((b - a) / side)
+		if side > longest:
+			longest = side
+			dir = (b - a) / side
+		major = major or road["major"]
+		var name: String = road["name"] if road["name"] != "" else road["ref"]
+		if name != "":
+			by_name[name] = float(by_name.get(name, 0.0)) + side
+	var streets: Array = by_name.keys()
+	streets.sort_custom(func(p: String, q: String) -> bool: return by_name[p] > by_name[q])
+	var corner := false
+	for x in dirs.size():
+		for y in range(x + 1, dirs.size()):
+			if absf(dirs[x].dot(dirs[y])) < 0.7:
+				corner = true
+	return {"fronts": fronts, "length": length, "streets": streets, "corner": corner,
+		"major": major, "dir": dir}
+
+
+# the street whose kerb runs past this point, {} when none
+static func _street_at(p: Vector2, cells: Dictionary) -> Dictionary:
 	var c := Vector2i(floori(p.x / 50.0), floori(p.y / 50.0))
+	var best := {}
+	var best_d := INF
 	for dx in range(-1, 2):
 		for dy in range(-1, 2):
 			for seg: Array in cells.get(c + Vector2i(dx, dy), []):
 				var r: Dictionary = seg[2]
-				var name: String = r["name"] if r["name"] != "" else r["ref"]
-				if name == "":
-					continue
-				var d := Geometry2D.get_closest_point_to_segment(p, seg[0], seg[1]).distance_to(p)
+				var d := Geometry2D.get_closest_point_to_segment(p, seg[0], seg[1]).distance_to(p) \
+					- float(r["width"]) * 0.5
 				if d < best_d:
 					best_d = d
-					best = {"name": name, "major": r["major"]}
+					best = r
+	if best_d > PAVEMENT + FRONT_TOL:
+		return {}
 	return best
 
 
-# which plots start built, and how big: denser where the zone is busier and on main streets
+static func _perimeter(poly: PackedVector2Array) -> float:
+	var sum := 0.0
+	for i in poly.size():
+		sum += poly[i].distance_to(poly[(i + 1) % poly.size()])
+	return maxf(sum, 0.001)
+
+
+# which lots start built, and how big: denser where the zone is busier and on main streets
 static func _start_tier(id: String, zone: String, density: float, major: bool) -> int:
 	var chance := density + (0.15 if major else 0.0)
 	if _h01(id + "built") >= chance:
@@ -530,13 +601,16 @@ static func _start_tier(id: String, zone: String, density: float, major: bool) -
 		"industrial":
 			return 1
 		"commercial":
-			return 4 if roll < 0.15 else 3
+			return 4 if roll < 0.2 else 3
 	if major:
-		return 3
-	return 1 if roll < 0.4 else 3
+		return 4 if roll < 0.12 else 3
+	if roll < 0.3:
+		return 1
+	return 2 if roll < 0.45 else 3
 
 
-# the plot under the clicked point, else the nearest one within 80 m; -1 when there is none
+# the lot under the clicked point, else the one whose edge is nearest, within 80 m; -1 when
+# there is none
 static func _office_plot(plots: Array[Dictionary]) -> int:
 	var best := -1
 	var best_d := 80.0
@@ -544,11 +618,55 @@ static func _office_plot(plots: Array[Dictionary]) -> int:
 		var poly: PackedVector2Array = plots[i]["poly"]
 		if Geometry2D.is_point_in_polygon(Vector2.ZERO, poly):
 			return i
-		var d := Geo.centre(poly).length()
-		if d < best_d and absf(Geo.area(poly)) >= 60.0:
-			best_d = d
-			best = i
+		for k in poly.size():
+			var d := Geometry2D.get_closest_point_to_segment(Vector2.ZERO, poly[k],
+				poly[(k + 1) % poly.size()]).length()
+			if d < best_d:
+				best_d = d
+				best = i
 	return best
+
+
+# a saved v2 area (small plots along every frontage) re-parcelled into v3 lots in place: v2 kept
+# the blocks and the roads, which is all the lots need; the rest of the file stays as it was
+static func upgrade(old: Dictionary) -> Dictionary:
+	var blocks: Array[Dictionary] = []
+	for b: Dictionary in old.get("blocks", []):
+		blocks.append({"id": b["id"], "zone": b.get("zone", "residential"),
+			"poly": _pts(b["poly"])})
+	var roads: Array[Dictionary] = []
+	for r: Dictionary in old.get("roads", []):
+		roads.append({"name": r.get("name", ""), "ref": r.get("ref", ""), "kind": r["kind"],
+			"width": float(r["width"]), "line": _pts(r["line"]), "major": r["kind"] in MAJOR})
+	var c: Dictionary = old.get("center", {"lat": 0.0, "lon": 0.0})
+	var parcel := parcel(blocks, roads, float(old["radius_m"]),
+		"%.4f%.4f" % [float(c["lat"]), float(c["lon"])])
+	var lots: Array[Dictionary] = parcel["lots"]
+	var out := old.duplicate()
+	out["format_version"] = VERSION
+	out["upgraded_from"] = int(old.get("format_version", 0))
+	out["plots"] = lots.map(_lot_out)
+	out["courts"] = (parcel["courts"] as Array[Dictionary]).map(_area_out)
+	out["office_plot"] = lots[parcel["office"]]["id"] if int(parcel["office"]) >= 0 else ""
+	var st: Dictionary = old.get("stats", {}).duplicate()
+	st["plots"] = lots.size()
+	st["lots"] = lots.size()
+	st["built"] = parcel["built"]
+	out["stats"] = st
+	return out
+
+
+static func _lot_out(p: Dictionary) -> Dictionary:
+	var out := p.duplicate()
+	out["poly"] = _ring(p["poly"])
+	return out
+
+
+static func _pts(raw: Array) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for q: Array in raw:
+		out.append(Vector2(q[0], q[1]))
+	return out
 
 
 # the first number in a tag value ("5", "4.5", "5;6", "12 m"); 0 when there is none
