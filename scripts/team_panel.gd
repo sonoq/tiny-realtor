@@ -1,23 +1,22 @@
 class_name TeamPanel
 extends RefCounted
 
-# The office's manager, a full-window panel over the office (docs/GAMEPLAY.md "Gerentes"): the
-# manager now in charge (portrait, name, rarity, bonuses) and the agency's candidates, each
-# with a Contratar button (tap twice: the new one replaces the old one), plus a button to see
-# other candidates now. Before the office reaches the level that opens managers it says so.
-# OfficePlay draws it on its own canvas and hands it the input.
+# The office's manager, the GERENTE page of the office tab (OfficePanel; docs/GAMEPLAY.md
+# "Gerentes"): the manager now in charge (portrait, name, rarity, bonuses) and the agency's
+# candidates, each with a Contratar button (tap twice: the new one replaces the old one), plus a
+# button to see other candidates now. Before the office reaches the level that opens managers it
+# says so. OfficePanel draws the header, the tabs and the footer round it and hands it the input.
 
-const NOW := Rect2(12, 86, 576, 136)
-const AGENCY_Y := 262.0
-const REFRESH := Rect2(392, 230, 196, 48)
-const ROW_Y := 286.0
-const ROW_H := 98.0
+const NOW := Rect2(12, 132, 576, 104)
+const AGENCY_Y := 268.0
+const REFRESH := Rect2(392, 244, 196, 44)
+const ROW_Y := 294.0
+const ROW_H := 94.0
 const SURE_S := 3.0
 
 var game: Game
 var id := ""
 var hot := Vector2(-100, -100)
-var _close := false
 # the candidate slot waiting for a second tap to be hired, and until when
 var _sure := -1
 var _sure_until := 0.0
@@ -33,14 +32,6 @@ func tick() -> void:
 	_clock += 0.1
 
 
-func back() -> bool:
-	return false
-
-
-func wants_close() -> bool:
-	return _close
-
-
 func _row(k: int) -> Rect2:
 	return Rect2(12, ROW_Y + k * ROW_H, 576, ROW_H - 8)
 
@@ -51,9 +42,6 @@ func _hire_btn(k: int) -> Rect2:
 
 
 func click(at: Vector2) -> void:
-	if Ui.BACK_RECT.has_point(at):
-		_close = true
-		return
 	if not game.managers_open(id):
 		return
 	if REFRESH.has_point(at):
@@ -77,23 +65,17 @@ func click(at: Vector2) -> void:
 
 
 func draw(c: CanvasItem) -> void:
-	Ui.backdrop(c)
-	Ui.header(c, "Gerente", true, hot)
-	var cash := Economy.money(game.money())
-	Ui.text_right(c, Vector2(588, 40), cash, Ui.TEXT, Ui.GOLD)
-	Ui.coin(c, Vector2(588 - Ui.text_width(cash, Ui.TEXT) - 22, 26))
 	Ui.panel(c, NOW, Ui.RIM_DIM)
 	var m: Variant = game.manager(id)
 	if not game.managers_open(id):
-		Ui.text(c, NOW.position + Vector2(18, 44), "Aún no tienes gerente", Ui.TEXT, Ui.CREAM)
-		Ui.text(c, NOW.position + Vector2(18, 80), "Sube la oficina al Nv %d y te llega uno" %
+		Ui.text(c, NOW.position + Vector2(18, 40), "Aún no tienes gerente", Ui.TEXT, Ui.CREAM)
+		Ui.text(c, NOW.position + Vector2(18, 70), "Sube la oficina al Nv %d y te llega uno" %
 			Economy.MANAGER_LEVEL, Ui.SMALL, Ui.MUTED, Ui.TEN)
-		Ui.text(c, NOW.position + Vector2(18, 108), "gratis. Luego eliges otros mejores.",
+		Ui.text(c, NOW.position + Vector2(18, 92), "gratis. Luego eliges otros mejores.",
 			Ui.SMALL, Ui.MUTED, Ui.TEN)
-		Ui.footer(c, "")
 		return
 	if m is Dictionary:
-		_person(c, m, NOW, 6.0, true)
+		_person(c, m, NOW, 5.0, true)
 	else:
 		Ui.text(c, NOW.position + Vector2(18, 44), "Sin gerente", Ui.TEXT, Ui.MUTED)
 		Ui.text(c, NOW.position + Vector2(18, 80), "Contrata uno de abajo", Ui.SMALL, Ui.MUTED,
@@ -120,7 +102,6 @@ func draw(c: CanvasItem) -> void:
 	if cands.is_empty():
 		Ui.text(c, Vector2(16, ROW_Y + 40), "Ya contrataste a todos; vuelve luego", Ui.SMALL,
 			Ui.MUTED, Ui.TEN)
-	Ui.footer(c, "")
 
 
 # a portrait with name, rarity and bonuses inside `r`
@@ -131,7 +112,7 @@ func _person(c: CanvasItem, m: Dictionary, r: Rect2, px: float, big: bool) -> vo
 	Faces.badge(c, badge, int(m["face"]), int(m["rarity"]))
 	var x := badge.end.x + 14.0
 	var rarity := int(m["rarity"])
-	var y := r.position.y + (36.0 if big else 28.0)
+	var y := r.position.y + (34.0 if big else 26.0)
 	var name: String = m["name"]
 	Ui.text(c, Vector2(x, y), name, Ui.TEXT, Ui.CREAM, Ui.BOLD if big else Ui.NARROW)
 	var nw := Ui.text_width(name, Ui.TEXT, Ui.BOLD if big else Ui.NARROW)
@@ -139,7 +120,7 @@ func _person(c: CanvasItem, m: Dictionary, r: Rect2, px: float, big: bool) -> vo
 		Faces.RARITY_INK[rarity], Ui.TEN)
 	# one bonus a line, so none is cut short: they are the choice
 	var room := r.end.x - x - 12.0
-	var line_y := y + 24.0
+	var line_y := y + (22.0 if big else 20.0)
 	for t: Dictionary in m["traits"]:
 		var s := Economy.trait_text(t)
 		var full := s
@@ -148,4 +129,4 @@ func _person(c: CanvasItem, m: Dictionary, r: Rect2, px: float, big: bool) -> vo
 			cut -= 1
 			s = full.left(cut).strip_edges() + "…"
 		Ui.text(c, Vector2(x, line_y), s, Ui.SMALL, Ui.MINT, Ui.TEN)
-		line_y += 20.0
+		line_y += 20.0 if big else 18.0

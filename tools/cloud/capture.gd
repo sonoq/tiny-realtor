@@ -5,8 +5,9 @@ extends SceneTree
 # the office view, pointing at a lot and selecting another (its card); a second office in Tokyo
 # and a third in Warsaw; and the red "too close" cursor; then the busy-server screen, and the first
 # office again close up on its moving traffic. In the first office it also plays the game: the
-# money HUD, a lot's buy card, buying (with its undo toast), works with a crane in progress, the
-# office card and a level-up, the bank and a loan sheet, the manager panel, the welcome-back
+# money HUD, the office's pin pointed at, a lot's buy card, buying (with its undo toast), works
+# with a crane in progress, the office tab (opened from the pin and from the level line) and a
+# level-up in it, the bank and a loan sheet, the office tab's manager page, the welcome-back
 # summary, a fully grown area and the 200 px window. It needs a real display (run it under
 # xvfb-run, see tools/cloud/screenshot.sh), because a headless run renders nothing a viewport
 # could hand back.
@@ -175,6 +176,25 @@ func _game(view: OfficeView, tag: String, n: int) -> int:
 	await _frames(2)
 	await _shot("%02d_game_%s_hud" % [n, tag])
 	n += 1
+	# the office has no building: its pin answers the pointer and opens the office tab
+	var pin := view.mark_on_screen() + Vector2(0, 8)
+	view.hover(pin)
+	if not view.on_mark(pin):
+		_fail("the office's pin does not answer the pointer")
+		return n
+	await _shot("%02d_game_%s_pin" % [n, tag])
+	n += 1
+	view.click(pin)
+	if play.panel_kind() != "office":
+		_fail("clicking the office's pin did not open the office tab")
+		return n
+	view.hover(Vector2(300, 200))
+	await _shot("%02d_game_%s_office_tab" % [n, tag])
+	n += 1
+	view.back()
+	if play.panel_kind() != "":
+		_fail("Esc did not close the office tab")
+		return n
 	# the nearest solar inside the radius: its card, buy it, then build on it
 	var solar := -1
 	for lot in view.lots_by_distance():
@@ -219,16 +239,22 @@ func _game(view: OfficeView, tag: String, n: int) -> int:
 	print("REDRAW lot %dx%d px: main thread %d ms, on screen after %d ms" % [
 		view._view.redraw_px.x, view._view.redraw_px.y, view._view.redraw_ms,
 		view._view.redraw_wall_ms])
-	# the office card and a level-up (the whole area is drawn again with the new radius)
+	# the office tab from the level line, and a level-up in it (the whole area is drawn again
+	# with the new radius)
 	g.state["money"] = Economy.level_cost(1) + 1000.0
 	view.click(OfficePlay.LEVEL_ZONE.get_center())
-	await _frames(2)
-	await _shot("%02d_game_%s_office_card" % [n, tag])
-	n += 1
-	view.click(OfficePlay.MAIN_BTN.get_center())
-	if g.level(id) != 2:
-		_fail("the level-up button did not level up")
+	if play.panel_kind() != "office":
+		_fail("the level line did not open the office tab")
 		return n
+	view.hover(OfficePanel.LEVEL_BTN.get_center())
+	await _frames(2)
+	await _shot("%02d_game_%s_office_level" % [n, tag])
+	n += 1
+	view.click(OfficePanel.LEVEL_BTN.get_center())
+	if g.level(id) != 2:
+		_fail("the office tab's level-up button did not level up")
+		return n
+	view.back()
 	var t0 := Time.get_ticks_msec()
 	while view._next_view != null and Time.get_ticks_msec() - t0 < 60000:
 		await process_frame
@@ -250,8 +276,12 @@ func _game(view: OfficeView, tag: String, n: int) -> int:
 	play.click(BankPanel.new(g)._sign_btn().get_center())
 	play.back()
 	await _frames(2)
-	# the manager, with a few candidates
-	play.open_panel("team")
+	# the office tab after the level-up, then its manager page, with a few candidates
+	play.open_panel("office")
+	await _frames(2)
+	await _shot("%02d_game_%s_office_tab2" % [n, tag])
+	n += 1
+	play.click(OfficePanel.TABS[OfficePanel.PAGE_TEAM].get_center())
 	await _frames(2)
 	await _shot("%02d_game_%s_manager" % [n, tag])
 	n += 1
@@ -275,7 +305,7 @@ func _game(view: OfficeView, tag: String, n: int) -> int:
 		if not g.owns(id, info["id"]):
 			g.buy(id, info)
 		var l := g.lot(id, info["id"])
-		if not l.is_empty() and not l.get("office", false):
+		if not l.is_empty():
 			l["t"] = int(l["mx"])
 			l.erase("to")
 			l.erase("end")

@@ -49,8 +49,10 @@ var active_radius := 0.0
 var texture: Texture2D
 # drawing positions over the roofs the player owns, for income pops
 var pops: Array[Vector2] = []
-# the office's REALTOR sign in the drawing, which labels keep clear of
+# the office's pin in the drawing (with a margin), which labels keep clear of
 var sign_box := Rect2()
+# the office's pin in the drawing
+var mark_box := Rect2()
 # the lots as AreaBuilder laid them out ("data", "poly", "screen", "box", "active")
 var lots: Array[Dictionary] = []
 # the pick pass: which lot each pixel of the drawing shows, null until `drawn`
@@ -60,6 +62,8 @@ var build_ms := 0
 var draw_ms := 0
 # keep what a lot redraw needs (the game); off for one-off renders
 var live := false
+# street names painted on the asphalt (StreetNames.PAINTED)
+var names := false
 # the last lot redraw: milliseconds of main-thread work (lay out, sort, record, paste) and wall
 # time until it was on screen, and the size of the rectangle redrawn
 var redraw_ms := 0
@@ -81,6 +85,8 @@ var _image: Image
 var _depth_img: Image
 var _shade_img: Image
 var _queue: Array[int] = []
+# the depth code of the office's pin
+var _mark_code := 0
 # boxes of the ground, shadow and pre ops (built on the first lot redraw)
 var _boxes := {}
 # lot -> its outline as runs of drawing pixels: [next to it, one further out]
@@ -121,12 +127,15 @@ func set_block(block: Dictionary) -> bool:
 	_area = AreaBuilder.new(_iso, block, active_radius)
 	_area.tags = not live
 	_area.people = not live
+	_area.names = names
 	_area.build()
 	_area.objects = DepthSort.order(_area.objects)
 	pops = _area.pops
 	lots = _area.lots
 	if not _area.keep_clear.is_empty():
 		sign_box = _area.keep_clear[0]
+	mark_box = _area.mark_box
+	_mark_code = depth_code(Iso.depth(_area.mark))
 	build_ms = Time.get_ticks_msec() - t0
 	return true
 
@@ -358,6 +367,20 @@ func lot_at(px: Vector2) -> int:
 	return (_pick_bytes[k] | (_pick_bytes[k + 1] << 8)) - 1
 
 
+# true when a drawing pixel within `grow` of the office's pin shows the pin or something behind
+# it (bare ground, a building farther back), not something standing in front of it
+func points_at_mark(px: Vector2, grow: float) -> bool:
+	if mark_box.size == Vector2.ZERO or not mark_box.grow(grow).has_point(px):
+		return false
+	if _depth_img == null:
+		return true
+	var q := Vector2i(px.floor())
+	if q.x < 0 or q.y < 0 or q.x >= _depth_img.get_width() or q.y >= _depth_img.get_height():
+		return false
+	var c := _depth_img.get_pixelv(q)
+	return (c.r8 | (c.g8 << 8)) <= _mark_code
+
+
 # the outline of everything a lot shows (its ground and buildings, where nothing stands in
 # front), as horizontal runs of drawing pixels: [the ring just outside it, the ring outside that]
 func outline(lot: int) -> Array:
@@ -411,65 +434,39 @@ func outline(lot: int) -> Array:
 
 # street name labels: for each name, spots along its straight stretches (every 60 m on a long
 # one, so a name shows near the office too, never two of one name closer than 60 m), with the
-# on-screen direction and the room the stretch offers; the caller drops the overlaps
+# short name (StreetNames.short), the on-screen direction and the room the stretch offers; the
+# caller drops the overlaps
 func street_labels() -> Array[Dictionary]:
-	var by_name := {}
-	for road: Dictionary in _block["roads"]:
-		var name: String = road["name"] if road["name"] != "" else road.get("ref", "")
-		if name == "" or road["kind"] in ["motorway", "trunk"] and road["name"] == "":
-			continue
-		if not by_name.has(name):
-			by_name[name] = []
-		by_name[name].append_array(_straight_runs(AreaBuilder._pts(road["line"])))
 	var out: Array[Dictionary] = []
-	for name: String in by_name:
-		var segs: Array = by_name[name]
-		segs.sort_custom(func(a: Array, b: Array) -> bool:
-			return a[0].distance_to(a[1]) > b[0].distance_to(b[1]))
-		var spots := PackedVector2Array()
-		for seg: Array in segs:
-			var a: Vector2 = seg[0]
-			var b: Vector2 = seg[1]
-			var length := a.distance_to(b)
-			if length < 25.0:
-				break
-			var d := project(b) - project(a)
-			var angle := d.angle()
-			if angle > PI * 0.5:
-				angle -= PI
-			elif angle < -PI * 0.5:
-				angle += PI
-			var n := maxi(1, int(length / 60.0))
-			for k in n:
-				var at := a.lerp(b, (k + 0.5) / n)
-				if at.length() > _radius - 15.0:
-					continue
-				var far := true
-				for q in spots:
-					far = far and q.distance_to(at) > 60.0
-				if not far:
-					continue
-				spots.append(at)
-				out.append({"text": name, "at": project(at), "angle": angle,
-					"room": project(a).distance_to(project(b)) / n, "metres": at})
-	return out
-
-
-# a polyline cut into nearly straight runs (bends under 12 degrees are ignored), so a street
-# mapped as many short pieces still offers its long stretches for a name
-static func _straight_runs(line: PackedVector2Array) -> Array:
-	var out: Array = []
-	if line.size() < 2:
-		return out
-	var start := line[0]
-	var dir := (line[1] - line[0]).normalized()
-	for i in range(1, line.size()):
-		var d := (line[i] - line[i - 1]).normalized()
-		if d.dot(dir) < cos(deg_to_rad(12.0)):
-			out.append([start, line[i - 1]])
-			start = line[i - 1]
-			dir = d
-	out.append([start, line[line.size() - 1]])
+	var spots := {}
+	for run: Array in StreetNames.runs(_block):
+		var name: String = run[0]
+		var a: Vector2 = run[1]
+		var b: Vector2 = run[2]
+		var length := a.distance_to(b)
+		if length < 25.0:
+			break
+		var d := project(b) - project(a)
+		var angle := d.angle()
+		if angle > PI * 0.5:
+			angle -= PI
+		elif angle < -PI * 0.5:
+			angle += PI
+		if not spots.has(name):
+			spots[name] = PackedVector2Array()
+		var n := maxi(1, int(length / 60.0))
+		for k in n:
+			var at := a.lerp(b, (k + 0.5) / n)
+			if at.length() > _radius - 15.0:
+				continue
+			var far := true
+			for q: Vector2 in spots[name]:
+				far = far and q.distance_to(at) > 60.0
+			if not far:
+				continue
+			spots[name].append(at)
+			out.append({"text": StreetNames.short(name), "name": name, "at": project(at),
+				"angle": angle, "room": project(a).distance_to(project(b)) / n, "metres": at})
 	return out
 
 
@@ -621,7 +618,8 @@ class Canvas:
 				var r := Rect2(op[2] + sp[1] + off, sp[2])
 				var a := Rect2(Sprites.atlas_rect(op[1]))
 				var base := Vector2(WorldShader.ATLAS_UV, 0)
-				var code := Color8(how, 0, 0)
+				# a sprite's ink copy (Painter.ink_under) is ink whatever the pass draws
+				var code := Color8(3 if op.size() > 3 else how, 0, 0)
 				draw_polygon(PackedVector2Array([r.position, Vector2(r.end.x, r.position.y),
 					r.end, Vector2(r.position.x, r.end.y)]), PackedColorArray([code, code, code,
 					code]), PackedVector2Array([a.position + base, Vector2(a.end.x,

@@ -204,7 +204,7 @@ static func bake(raw: Dictionary, lat0: float, lon0: float, radius: float) -> Di
 	var courts: Array[Dictionary] = parcel["courts"]
 	var office: int = parcel["office"]
 	var built: int = parcel["built"]
-	return {
+	var out := {
 		"format": FORMAT, "format_version": VERSION,
 		"source": "OpenStreetMap via Overpass API (streets, land use, parks, water)",
 		"attribution": "© OpenStreetMap contributors (ODbL)",
@@ -225,6 +225,8 @@ static func bake(raw: Dictionary, lat0: float, lon0: float, radius: float) -> Di
 			"water": water.size(),
 			"graph_ms": t_graph, "bake_ms": Time.get_ticks_msec() - t0},
 	}
+	OfficeMark.at(out)
+	return out
 
 
 # Overpass geometry as metre polylines; a null (a node outside a clipped output) splits a run
@@ -533,9 +535,11 @@ static func parcel(blocks: Array[Dictionary], roads: Array[Dictionary], radius: 
 				"built_tier": tier, "levels": levels_for(id, tier),
 				"owned": false})
 	var office := _office_plot(lots)
+	# the player gets the lot under the office free, as the game starts it (the office itself
+	# has no building: only a marker on the ground, OfficeMark)
 	if office >= 0:
-		lots[office]["built_tier"] = 3
-		lots[office]["levels"] = maxi(5, int(lots[office]["levels"]))
+		lots[office]["built_tier"] = Economy.OFFICE_LOT_TIER
+		lots[office]["levels"] = levels_for(lots[office]["id"], Economy.OFFICE_LOT_TIER)
 	_clear_start(lots, office)
 	var built := 0
 	for p in lots:
@@ -699,6 +703,8 @@ static func upgrade(old: Dictionary) -> Dictionary:
 	st["lots"] = lots.size()
 	st["built"] = parcel["built"]
 	out["stats"] = st
+	out.erase("office_mark")
+	OfficeMark.at(out)
 	return out
 
 

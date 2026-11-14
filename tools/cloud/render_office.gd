@@ -5,13 +5,14 @@ extends SceneTree
 # office at the game's default zoom (<id>_x2.png). It fails when any pixel is off the palette.
 # A saved v2 area is re-parcelled into lots first (BlockBaker.upgrade), in memory only.
 # With --tiers it also makes <id>_tiers.png: lots near the office rebuilt at each tier (solar,
-# casas, urbanizacion, bloque, torres, rascacielos, then industrial sheds and the office's own
-# lot), each cropped at x2 with its lot outlined in gold and its name under it; those tiers are
-# set for the sheet, the area's real ones are in <id>_full.png.
-# With --redraw it checks the game's one-lot redraws: four lots near the office are bought,
-# rebuilt and put into works one by one through BlockView.redraw_lot, and the result must match
-# a fresh full drawing of the same area (<id>_redraw.png: before | after, at x2); it prints how
-# long each redraw kept the main thread busy.
+# casas, urbanizacion, bloque, torres, rascacielos, then industrial sheds and the lot under the
+# office, with the office's pin by it), each cropped at x2 with its lot outlined in gold and its
+# name under it; those tiers are set for the sheet, the area's real ones are in <id>_full.png.
+# With --redraw it checks the game's one-lot redraws: four lots near the office (the office's
+# own lot among them: it is an ordinary lot now) are bought, rebuilt and put into works one by
+# one through BlockView.redraw_lot, and the result must match a fresh full drawing of the same
+# area (<id>_redraw.png: before | after, at x2); it prints how long each redraw kept the main
+# thread busy.
 # For looking at the art quickly; needs a display (xvfb-run, see screenshot.sh).
 #
 #   godot --path . --rendering-driver opengl3 --audio-driver Dummy \
@@ -164,18 +165,26 @@ func _redraw(block: Dictionary, id: String) -> bool:
 	var area: Dictionary = block.duplicate(true)
 	var lots: Array = area["plots"]
 	var order: Array[int] = []
+	var office := -1
 	for i in lots.size():
 		var c := Iso.centroid(AreaBuilder._pts(lots[i]["poly"]))
-		if lots[i]["id"] != area["office_plot"] and c.length() < 140.0:
+		if lots[i]["id"] == area["office_plot"]:
+			office = i
+		elif c.length() < 140.0:
 			order.append(i)
 	order.sort_custom(func(a: int, b: int) -> bool:
 		return Iso.centroid(AreaBuilder._pts(lots[a]["poly"])).length() \
 			< Iso.centroid(AreaBuilder._pts(lots[b]["poly"])).length())
+	# the lot the office used to stand on is built two tiers up like any other
+	if office >= 0:
+		order.insert(1, office)
 	if order.size() < 4:
 		printerr("RENDER FAILED: not enough lots near the office to redraw")
 		return false
 	var view := BlockView.new()
 	view.live = true
+	# as the game draws it: with the street names painted, if that is the look in use
+	view.names = OfficeView.LABEL_STYLE == StreetNames.PAINTED
 	view.active_radius = Rules.active_radius(1)
 	view.set_block(area)
 	root.add_child(view)
@@ -201,6 +210,7 @@ func _redraw(block: Dictionary, id: String) -> bool:
 	var after := view.texture.get_image()
 	var fresh_view := BlockView.new()
 	fresh_view.live = true
+	fresh_view.names = view.names
 	fresh_view.active_radius = Rules.active_radius(1)
 	fresh_view.set_block(area)
 	root.add_child(fresh_view)
