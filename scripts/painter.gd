@@ -14,6 +14,7 @@ enum { OP_POLY, OP_WALL, OP_RECT, OP_TEX }
 
 const UV_BASE := 16384.0
 const VIEW := Vector3(1, 1, 1)
+const DIRS: Array[Vector2] = [Vector2(-1, 0), Vector2(1, 0), Vector2(0, -1), Vector2(0, 1)]
 
 var iso: Iso
 var ops: Array = []
@@ -67,6 +68,37 @@ func line(a: Vector2, b: Vector2, idx: int) -> void:
 
 func tex(key: String, at: Vector2) -> void:
 	ops.append([OP_TEX, key, at])
+
+
+# a one-pixel ink silhouette under the ops recorded since `start`, as BlockView's outline pass
+# gives a whole object: towers that share one object (a podium, sky bridges) still read apart
+# where one stands in front of another. A sprite's ink copy carries a fourth "ink" element.
+func ink_under(start: int) -> void:
+	var body := ops.slice(start)
+	var ink: Array = []
+	var black := Pal.i("INK")
+	for d in DIRS:
+		for op: Array in body:
+			match op[0]:
+				OP_POLY:
+					var moved := [OP_POLY, Iso.moved(op[1], d), black]
+					if op.size() > 3:
+						moved.append(op[3])
+					ink.append(moved)
+				OP_RECT:
+					var r: Rect2 = op[1]
+					ink.append([OP_RECT, Rect2(r.position + d, r.size), black])
+				OP_WALL:
+					if op[4]:
+						continue
+					var code: Color = op[3]
+					code.r8 = (code.r8 & ~15) | WorldShader.STYLE_INK
+					ink.append([OP_WALL, Iso.moved(op[1], d), op[2], code, true, op[5]])
+				OP_TEX:
+					ink.append([OP_TEX, op[1], op[2] + d, true])
+	ops.resize(start)
+	ops.append_array(ink)
+	ops.append_array(body)
 
 
 static func line_runs(a: Vector2, b: Vector2) -> Array[Rect2]:

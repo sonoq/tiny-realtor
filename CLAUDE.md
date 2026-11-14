@@ -85,7 +85,11 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   Reintentar / Volver.
 - `office_view.gd` (`OfficeView`) - one saved office, the map viewer: shows `BlockView.texture`
   (drawn once, a frame or two after opening; `is_drawn()`) at x1/x2/x3 (x2 = the mockup), back +
-  neighbourhood ("N / M tuyos"), street names sheared along their streets in the pixel font.
+  neighbourhood ("N / M tuyos"), street names as `LABEL_STYLE` says (`StreetNames`; the static
+  `labels` lets tools switch it): PAINTED (default) has them in the drawing and only adds a
+  plate for the street under the pointer (`_street_under`, `HOVER_REACH`); MICRO / PLATES place
+  them over the map per view (`_labels_now`: each name once, nearest the view's middle first,
+  never over a lot or a building in the pick image, never over the pin).
   Lots are pointed at through BlockView's pick image (`lot_under`): hover = a cyan outline of
   everything the lot shows (grey when outside the active radius, still selectable), click =
   `select` (gold outline, slid up out from under the card; `focus_lot` pans one into view).
@@ -217,10 +221,12 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   trimmed to the wall) in painter's order, all in the lot's number (`r + g * 256 = lot + 1`):
   `lot_at(px)` is whatever lot is drawn there, a tower's roof included; `outline(lot)` gives
   the two pixel rings around it as runs (cached). `lots` = AreaBuilder's per-lot entries.
-  `street_labels()` gives label spots for the overlay; `pops` the roofs income pops rise from;
+  `street_labels()` gives label spots for the overlay (short names); `names` paints them on the
+  asphalt instead (AreaBuilder `names`); `pops` the roofs income pops rise from;
   `mark_box` the office's pin, `sign_box` it with a margin (labels keep clear), and
   `points_at_mark(px, grow)` (live mode: the depth image says nothing stands in front).
-  `live` mode (the game): any lot may become a skyscraper, so the drawing leaves room; the
+  `live` mode (the game): any lot may become a rascacielos, so the drawing leaves room for
+  `top_of(5, 35)` (~70 px, a third of the old skyscraper's); the
   builder and the image are kept, and `redraw_lot(i)` re-lays one lot (`AreaBuilder.rebuild_lot`)
   and redraws only the rectangle it touches (old and new buildings and shadows + a margin; only
   the ops and objects that reach it, the objects re-sorted among themselves) in small viewports,
@@ -239,11 +245,14 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   rebuilt at any tier without touching the file), with the mockup's recipes: 0 dirt lot with
   fence posts, weed patches, bushes and a "$" sign (in the radius); 1 a row of houses with
   hedged gardens (`Plotter.sites`, `SITE_DEPTH/FRONT`); 2 bigger houses with pools; 3
-  apartment blocks of mixed heights and facades round a courtyard garden; 4 one to three towers
-  (`_spots`: axis-aligned squares well inside the lot) on a paved plaza; 5 a skyscraper with a
-  gold crown on a podium on a plaza; industrial 1-2 = sheds in a yard; a plot with `works` = a
-  building site (fence, concrete floors under a skeleton, scaffolding, a tower crane from
-  bloque up). The office has no building: `_office_mark` draws a dashed gold ring on the ground
+  apartment blocks of mixed heights and facades round a courtyard garden; 4 torres and 5
+  rascacielos as `Skyline` plans them (`_skyline` / `_piece`: each group one object, each mass
+  in it ringed in ink by `Painter.ink_under`) on a paved plaza; industrial 1-2 = sheds in a
+  yard; a plot with `works` = a building site (fence, concrete floors under a skeleton,
+  scaffolding, a tower crane from bloque up; torres / rascacielos use the plan's footprints and
+  heights). With `names` on (the game, PAINTED), `_paint_names` paints `StreetNames.painted`
+  into the ground right after the lane marks (the dashes under a name are taken out) and every
+  tree laid out later keeps off them (`_on_name`), so a lot redraw keeps them. The office has no building: `_office_mark` draws a dashed gold ring on the ground
   (`pre`, under everything that stands) and a gold map pin sprite (`office`, the city map's
   house in its head; an object of no lot, so it sorts, outlines and goes through the depth pass
   like a lamp but never into the pick image) at `OfficeMark.at`; street trees, lamps, people and
@@ -255,9 +264,27 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   = centroid inside the radius). Trees (gardens, parks, street trees), lamps and people inside
   the active radius, cars, price tags (`price_tag`, `price_of`) on the nearest signed lots. All
   placement by stable hashes.
+- `skyline.gd` (`Skyline`) - the two top tiers as plans (data only; AreaBuilder draws them and
+  lays their works out from them). **Height cap** so a grown area reads in the widget: torres
+  roofs `TOWER_Z` 30-42 px + a 5 px setback (+ a podium in B), rascacielos' tallest roof
+  `SKY_Z` 52-60 px + a 7 px spire, the others of a lot stepped down (`STAGGER`); `top()` is
+  what `AreaBuilder.top_of` and the live headroom use. The tiers differ by count, glass and
+  gold, not height. Four layouts, `AreaBuilder.SKYLINE_STYLE` picks one (`AreaBuilder.skyline`
+  lets tools switch it): CLUSTER A (staggered slender glass towers), BRIDGES B (default: towers
+  on a lawn-roofed podium, rascacielos joined by gold sky bridges), MEGA C (a terraced block,
+  roof gardens, a helipad), RING D (towers round a garden with a fountain).
+- `street_names.gd` (`StreetNames`) - street names for the office view: `short()` (generic
+  word dropped or abbreviated: "Carrer d'Àngel Guimerà" -> ANGEL GUIMERA, Avinguda -> AV.,
+  accents dropped for the micro font), `runs()` (named streets' straight stretches),
+  `painted()` (B: names in the micro font painted on the asphalt in `PAINT_INK`, on straight
+  stretches of 8 m+ streets clear of junctions, sheared column by column to the street's slope,
+  each name at most `PAINT_REPEAT` times; from the streets alone). The four looks: MICRO A,
+  PAINTED B (default), PLATES C, HOVER D (`OfficeView.LABEL_STYLE`).
 - `painter.gd` (`Painter`) - records one object's ops (POLY, WALL, RECT, TEX) with the mockup's
   primitives: `wall` (wall_pixels), `prism`, `face3d`, `pitched`, Bresenham `line`. POLY ops
   from `flat`/`face3d` carry each corner's ground depth, WALL ops their two ends' (depth pass).
+  `ink_under(start)` puts a one-pixel ink silhouette under the ops since `start` (a sprite's
+  ink copy carries a 4th element), so masses sharing one object still read apart.
 - `world_shader.gd` (`WorldShader`) - the two shaders, generated with the palette's names: the
   facade shader (walls per pixel: apartment, office, house, tower, sky, plain, skeleton,
   scaffold, slab, cab, shed, ink; sprites from the atlas) and the ground shader.
@@ -453,6 +480,14 @@ builds a tower there through the one-lot redraw and fails if any pixel of the ca
 the free manager, saves, time away and its cap, clock moved back and forth, a broken save, the
 bank's limits and an adversarial max-loan + lost income + week away, managers, the builder, the
 office's free lot built like any other and its income by level, a v1 save migrated on load).
+`tools/cloud/skyline_sheet.gd -- --out=/abs/dir --file=/abs/office.json [--only=0,2]` (xvfb-run)
+renders the four skyline layouts side by side (two lots as torres, rascacielos and works, and
+the area fully grown at x2) into `skyline_options.png`; `tools/cloud/labels_sheet.gd --
+--out=/abs/dir [--id=office] [--pan=x,y]` (xvfb-run, overwrites `user://save.json`) opens a
+saved office grown in the real game and shoots the four street-name looks at x2 with traffic
+(`labels_options.png`, `labels_final.png` = the look in use pointing at a street).
+`docs/screenshots/skyline/` holds them for Valencia, plus `skyline_before_after.png` (the grown
+area at x2, the old 170 px skyscrapers | the capped clusters) and `tiers_new.png`.
 `econ_sim.gd [-- --file=/abs/office.json] [--days=N] [--only=ideal,widget,lazy,loans,abuser,absent]`
 plays kinds of player and prints milestones and snapshots (fixture area by default); it exits 1
 if any player ever has interest above the cap or debt that does not shrink with autopay. `docs/screenshots/style_a_side_by_side.png` is the mockup next to the
