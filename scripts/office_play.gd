@@ -646,7 +646,7 @@ func _draw_markers() -> void:
 		var roof: Vector2 = view.drawing_to_screen(lot["roof"])
 		if not view_r.has_point(roof):
 			continue
-		if l.has("end"):
+		if l.has("end") and roof.y - 44.0 >= OfficeView.MAP_TOP:
 			var f := game.progress(id, lid)
 			var bar := Rect2((roof + Vector2(-22, -26)).round(), Vector2(44, 8))
 			draw_rect(bar, Ui.VOID)
@@ -655,7 +655,7 @@ func _draw_markers() -> void:
 			var left := Economy.duration(float(l["end"]) - _now())
 			var w := Ui.micro_width(left, 2.0)
 			Ui.micro(self, (roof + Vector2(-w * 0.5, -42)).round(), left, Ui.CREAM, 2.0, true)
-		elif not l.get("office", false) and game.can_build(id, lid) == "":
+		elif not l.has("end") and not l.get("office", false) and game.can_build(id, lid) == "":
 			_arrow_mark(roof + Vector2(0, -12))
 	# price tags: the lots for sale nearest the middle of the view, never one over another
 	tags.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
