@@ -17,8 +17,9 @@ made by the game, drawn as procedural isometric pixel art made with maths.
   scaffolding and cranes), the office tab (the office is a business, not a building: level up
   for a bigger radius and more commissions, the builder switch, one manager per office with
   pixel portraits, rarity and bonuses, greyed PRONTO rows; on the map only a gold pin marks it)
-  and the bank (three loans that can never choke you, autopay). The game is saved under
-  `user://`. The design and every number: `docs/GAMEPLAY.md` (Spanish),
+  and the bank (three loans that can never choke you, autopay), plus **events** for active
+  play (flash offers and tenant jobs with minigames, in a slim banner under the header). The
+  game is saved under `user://`. The design and every number: `docs/GAMEPLAY.md` (Spanish),
   `scripts/economy.gd`, `tools/econ_sim.gd`.
 - **Visual style: A, "sibling of Tiny Battlegrounds" (decided by Oscar).** The spec is the
   mockup in `docs/style_mockups/a_battlegrounds/` (`gen_battlegrounds.py` + its PNGs); the other
@@ -143,7 +144,12 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   right after the window got the focus (`App.focus_ms`) or the second tap of a double tap does
   not spend (nor does it in the office tab), the welcome card ignores taps for 0.7 s, a drag that starts on the UI does not pan.
   Before an action the game is brought up to date (`OfficeView.sync`). Toasts (important ones
-  queue). The welcome-back card ("Mientras no estabas: +$X"). Holds the panel:
+  queue). The welcome-back card ("Mientras no estabas: +$X"). The events' layer `events_ui`
+  (EventUi, below) ticks the events while the map is in front, draws its banner and marks, and
+  takes clicks before the rest; the toast moves under the banner (`_toast_rect`). A panel with
+  `step` / `press` / `drag` (JobPanel) is stepped every frame and gets the press (once: OfficeView
+  calls `press` a single time) and drags. `open_job(ev)`, `event_buy(i)`, `street_of(i)`.
+  Holds the panel:
 - `bank_panel.gd` (`BankPanel`), `office_panel.gd` (`OfficePanel`) - full-window panels over the
   office with the back button and title: the bank (debt, interest/min next to rent/min, autopay
   NO/10/25/50 % with the payoff time, three loans with Pedir / Devolver; Pedir opens a sheet that
@@ -154,6 +160,31 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   PRONTO rows `SOON` for later features) and GERENTE, which is `team_panel.gd` (`TeamPanel`,
   drawn inside the tab: the one in charge, the agency's three candidates, reroll, hire with a
   second tap). `OfficePlay.open_panel("office" | "team" | "bank")`.
+- `event_ui.gd` (`EventUi`) - the events on the map: a slim banner (`BANNER`, under the header,
+  left of the zoom column) that slides in with the event's icon (`ICONS`, 8x8 pixel glyphs), a
+  title, a micro-font line (what and where) with the seconds it still waits and a shrinking gold
+  bar, a button (`BTN`: the sale price, ACTIVAR, ACEPTAR, +$X, AYUDAR) and an X (`CLOSE`,
+  dismiss); a tap on its body pans to the lot and opens its card (a job opens JobPanel). An
+  accepted exprés shows in it until used. Clicks on it fall through to the map for `GRACE_S`
+  after it slides in; buying from it goes through OfficePlay's guards and undo. A gold bubble
+  with the icon bobs over the event's lot, a star + time over each VIP building (`draw_marks`);
+  `card_line(i)` is the lot card's line about it. `active()`: window focused and the pointer
+  moved within `ACTIVE_FOCUS_S` (180), or the pointer over the window within `ACTIVE_HOVER_S` (30);
+  a frame longer than `TICK_MAX` is not played time.
+- `job_panel.gd` (`JobPanel`) - a tenant job, full-window like the bank: INTRO (who, how, what a
+  perfect / failed job pays, EMPEZAR), PLAY (the minigame under a time bar, a hint line, a short
+  "¡Ya!" `READY_S` before the clock runs), DONE (one to three stars, the money, ¡BIEN!). Pays in
+  `_finish` (Events.finish_job) before the result shows: back mid-game ends it with the score so
+  far, back on the intro leaves the job waiting. `paused` + `run(dt)` let tools step it.
+- `minigames/` - `job_game.gd` (`JobGame`, base: own clock, `limit` = `Economy.JOB_S`, score 0..1,
+  `press` / `click` / `drag`, rising pops, pixel `sprite` / `inked` / `thick` helpers, seeded
+  rng), `plunge_game.gd` (`PlungeGame`, "Váter atascado": a marker sweeps a gauge, push in the
+  gold zone `GOAL` (6) times; it speeds up and the zone narrows, never under a tenth of a second
+  in it; a miss waits `MISS_WAIT`, so mashing loses), `wires_game.gd` (`WiresGame`, "Sin luz en
+  casa": 4 wires to their sockets in a shuffled order, click-click either way or drag over the
+  socket; colours plus shapes), `bulbs_game.gd` (`BulbsGame`, "Bombillas fundidas": a facade at
+  night, tap the dark windows; more go out at `BURNS`, each flickering first). Every hit box is
+  over MIN_HIT.
 - `faces.gd` (`Faces`) - manager portraits: 16x16 pixel busts from a seed (skin, hair style and
   colour, eyes, glasses, moustache, suit and tie or blouse), palette colours with an ink rim,
   drawn at whole multiples; `badge` frames one in its rarity's colour.
@@ -163,7 +194,11 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   pre-built markup; plusvalía and works inflation; office levels: cost, the office's own
   income `OFFICE_INCOME` (commissions), cranes, offline hours; `OFFICE_LOT_TIER` (the free lot
   starts a solar); later offices; the three loans and the bank's caps; managers: hire prices,
-  pool odds, traits) and what a lot is worth from real data (`lot_infos`: area factor, location
+  pool odds, traits, among them the event ones `deals` (Ofertas) and `handy` (Mañoso); the
+  events: `EVENT_WAIT`, `EVENT_LIFE`, `EVENT_HOUR_CAP` (20 min of income an hour),
+  `EVENT_START` (a new game's bucket, 6), `EVENT_EARLY` (no reward over 20 % of all earned so
+  far: the opening is not skipped), `EVENT_WEIGHT`, SALE_* / EXPRESS_* / VIP_* / BUYER_MIN /
+  JOB_*) and what a lot is worth from real data (`lot_infos`: area factor, location
   bonuses park / avenue / water / commercial / rails, max tier by zone and size, distance).
   `money()` ("$12.345", "$1,23M", "$45,6MM" = mil millones, "$7,1B" = billón) and `duration()`.
 - `game.gd` (`Game`) - the player's game, plain data with an injectable clock (`clock`, `mono`):
@@ -184,7 +219,25 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   then `save.json.bak` and keeps an unreadable save aside (`save.corrupt-<time>.json`) before a
   new game; `save` keeps the previous file as `.bak`; `_sanitize` drops or clamps malformed
   entries. Works count for inflation when they start; each tier of a multi-tier works pays the
-  inflation one at a time would. `apply` writes the game's lots into a baked area.
+  inflation one at a time would. `apply` writes the game's lots into a baked area. Event hooks:
+  `buy_price` takes a sale's cut (`Events.sale_cut`) and `buy` closes it (`Events.on_bought`);
+  `build` started by the player (not the builder, `at` < 0) uses an accepted exprés
+  (`Events.take_express`); `lot_rent` doubles a lot with a live `vip` (checked against `_rent_t`,
+  the start of the piece `advance` is paying; a VIP's end is a boundary of `advance`, so it pays
+  to the second); `_sanitize` calls `Events.sanitize`.
+- `events.gd` (`Events`) - the events' rules, static functions over `Game.state["events"]`, driven
+  by `tick(g, id, infos, dt, active)` with seconds of play (only active ones count: the wait for
+  the next event and the life of the waiting one), so tools drive it with a fake clock. One
+  waiting event per office (`pending`); `spawn(g, id, infos, kind?)` picks among the kinds that
+  make sense now (`_make`: sale = a lot for sale in the radius whose full price is within
+  `SALE_REACH` min of income of your cash, 30-50 % off worth 0.5-6 min; express = a free crane
+  and works of 1 min+ you can pay; vip = a built lot, at most `VIP_MAX` extra minutes; buyer /
+  job = a built lot; never the same minigame twice running), deterministic from (office, n).
+  Rewards are minutes of income reserved from the hourly bucket (`budget`, refilled by game time
+  up to `EVENT_HOUR_CAP`; never over `early_cap`) and given back when not taken. `accept` (express, vip, buyer),
+  `dismiss`, `finish_job(g, id, n, score)` (pays `JOB_FAIL` + the rest by score, once), `reward`,
+  `job_pay`, `express_left` / `express_time` / `vip_left`, a short `log` and `stats`. `auto` off
+  (tools) stops the screens from ticking them.
 - `rules.gd` (`Rules`) - `MAX_RADIUS` (500 m), `ACTIVE_RADIUS` per level (150 m at level 1),
   `MIN_SEPARATION` (1.5 km), nearest office / too-close checks (great-circle distance).
 - `store.gd` (`Store`) - everything under `user://`: `cities/<city>.json`,
@@ -482,10 +535,10 @@ The office view is the mockup's renderer ported to the GPU, pixel for pixel in s
   part of it: price tags, arrows, bars and pops come from the game, live. `render_office` still
   draws AreaBuilder's own placeholder tags (`PRICE_M2`) for one-off renders.
 
-## Save format (`tiny-realtor-save` v2, `user://save.json`)
+## Save format (`tiny-realtor-save` v3, `user://save.json`)
 
 Written through `save.json.tmp`, the previous file kept as `save.json.bak`.
-`format`, `version` 2, `money`, `seen` (unix seconds paid up to; only grows), `created`,
+`format`, `version` 3, `money`, `seen` (unix seconds paid up to; only grows), `created`,
 `last_office` (opened at start), `autopay` (0 / 0.1 / 0.25 / 0.5), `loans` {quick | normal |
 mortgage: {debt, lent (incl. fee; growth stops at 1.5x), taken}}, `stats` {earned, interest,
 fees, repaid, built, bought, loans}, `offices` {office id: {level, office_lot, works (tiers
@@ -498,6 +551,13 @@ from the office file. Rents and prices are kept per lot so income needs no offic
 v1 (the office stood on its lot): that lot was `{t: 3, k: 0, mx: 3, office: true}` and paid
 the office's rent; on load it becomes the free solar `{t: OFFICE_LOT_TIER, fill: true}` and the
 office's rent is its `office_income`, so a migrated game earns the same.
+v3 adds `events` {wait (active s to the next), n, pending {office id: {n, kind (sale | express |
+vip | buyer | job), office, lot, left / life (active s), seed, minutes (reserved), cut, secs, x,
+game (plunge | wires | bulbs)}}, budget (minutes), budget_t, last_game, log [{n, kind, how, paid,
+t, game?, score?}], stats {spawned, taken, expired, dismissed, paid, jobs, jobs_won,
+express_saved}}, an office's `express` (unix s an accepted exprés lasts until) and a lot's `vip`
+(unix s) + `vx` (rent multiplier); a v2 save gets `events` fresh; `Events.sanitize` drops odd
+ones.
 
 ## Office area format (`tiny-realestate-block` v3)
 
@@ -568,7 +628,14 @@ close-up, and the world map (`NN_world_*`): a fourth office placed from it in Va
 group clicked zooms in, then city -> office; back -> city map -> back -> the world centred on
 Valencia), the whole world with the four pins, Europe x8, a city pointed at, Spain x16, the
 list Barcelona's pin opens (its office row must open the office), Tokyo, the city list and
-back, the 200 px window. Leave Valencia out of `--spot`. Extra args: `--fixture`, `--fresh` (also re-download city maps;
+back, the 200 px window; last the events (`8N_event_*` / `8N_job_*`, numbered from 80, made to
+order in the first office: a flash sale's banner and the lot it opens, a job's banner, each
+minigame's intro, mid-play and result through the real input path with its clock stepped by
+hand, the wires solved frame by frame into `events_gif/NNN.png`, a VIP's star, the 200 px window
+with a banner; `Events.auto` is off for the whole capture, so events never pop up in the other
+shots). `docs/screenshots/events/` holds the best ones for Oscar on real Barcelona data and
+`wires.gif` (`ffmpeg -framerate 12 -i events_gif/%03d.png` with a palette). Leave Valencia out
+of `--spot`. Extra args: `--fixture`, `--fresh` (also re-download city maps;
 offices are always wiped first), `--spot=city:lat:lon` (repeatable, replaces the places),
 `--raw-cache=DIR`. Under Xvfb a `WARNING: Could not set V-Sync mode` line is normal.
 
@@ -607,7 +674,12 @@ the real game with a grown save (two works with cranes), lets the cars drive and
 `game_with_traffic_<city>.png` (x2); then stops a car on a street just behind an empty lot,
 builds a tower there through the one-lot redraw and fails if any pixel of the car still shows
 (`cars_hide_<city>.png`: before | after, x3). It overwrites `user://save.json`.
-`game_check.gd` drives the rules with a fake clock (buy, build, multi-tier, rent, level up and
+`game_check.gd` drives the rules with a fake clock (and the events: none while away, one waiting
+through time away, expiry, the pace, determinism, every kind turning up, each offer's effect -
+a sale's price, an exprés's half time and its window, a VIP's extra to the second, a buyer's
+cash, a job's pay by score and only once - the hourly cap, the event traits, the three
+minigames played well, badly and by mashing, and saves of pending events and timed effects, a
+v2 save and malformed event data) (buy, build, multi-tier, rent, level up and
 the free manager, saves, time away and its cap, clock moved back and forth, a broken save, the
 bank's limits and an adversarial max-loan + lost income + week away, managers, the builder, the
 office's free lot built like any other and its income by level, a v1 save migrated on load).
@@ -635,9 +707,16 @@ off the palette. `docs/screenshots/cement/` holds them for Valencia: the sand tu
 planted, `jesus_maria_triangle.png` (spot -75:55), `gran_via_trees.png` (40:-100, the median's
 trees off the carriageways).
 `docs/screenshots/skyline/` keeps the earlier height-cap work (the four old layouts).
-`econ_sim.gd [-- --file=/abs/office.json] [--days=N] [--only=ideal,widget,lazy,loans,abuser,absent]`
+`econ_sim.gd [-- --file=/abs/office.json] [--days=N] [--only=ideal,widget,lazy,loans,abuser,absent,active,active_noev]`
 plays kinds of player and prints milestones and snapshots (fixture area by default); it exits 1
-if any player ever has interest above the cap or debt that does not shrink with autopay. `docs/screenshots/style_a_side_by_side.png` is the mockup next to the
+if any player ever has interest above the cap or debt that does not shrink with autopay. The
+`active` player is the widget one plus a daily session of active play (`SESSION_FIRST` 1 h,
+then `SESSION` 30 min) taking events (`TAKE` 80 %, realistic job scores), over five `SEEDS`;
+`active_noev` the same sessions without events. With widget and active played it prints how much
+sooner active reaches each milestone (geometric mean over the seeds, the luckiest seed, and
+without events) and exits 1 unless the average is `RATIO_MIN`..`RATIO_MAX` (1.5-2.5x) and no
+milestone's mean passes `MAX_RATIO` (3x); the office's last three milestones are set by its
+cranes (`CRANE_BOUND`), the same for everyone, so they are shown but not counted. `docs/screenshots/style_a_side_by_side.png` is the mockup next to the
 real Barcelona office.
 
 Traffic: `traffic_check.gd [-- --file=/abs/office.json] [--minutes=6] [--seeds=5]` runs the

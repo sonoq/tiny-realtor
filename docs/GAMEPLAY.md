@@ -2,8 +2,9 @@
 
 *Primer bucle de juego. Corto y concreto; los números exactos viven en `scripts/economy.gd` y
 `tools/econ_sim.gd` los juega. Si algo choca con `DESIGN.md`, manda este documento en lo que es
-juego (dinero, compras, obras, banco, gerentes). Revisado tras dos revisiones de diseño (juego en
-una esquina y economía) y dos de código.*
+juego (dinero, compras, obras, banco, gerentes, eventos). Revisado tras dos revisiones de diseño
+(juego en una esquina y economía) y dos de código; los eventos, tras una de diversión y una de
+código.*
 
 ## 1. Para qué tipo de juego es
 
@@ -38,7 +39,9 @@ trabajas. Casi siempre está abierta pero nadie la mira. Por eso:
    **Nv 2** llega tu primer **gerente, gratis**. En el **Nv 3** se abre el **constructor
    automático** (OBRAS SOLAS).
 5. Con una oficina en Nv 3 puedes **abrir otra** en otro sitio, que empieza su propia escalera.
-6. Más adelante: salir a bolsa, recalificaciones, eventos (punto 11).
+6. Si juegas activo, salen **eventos** (punto 10): ofertas flash y encargos de inquilinos con
+   minijuegos, que te adelantan sin castigar al que no juega.
+7. Más adelante: salir a bolsa, recalificaciones (punto 12).
 
 ## 3. Los terrenos
 
@@ -158,7 +161,8 @@ Para ir más rápido, nunca para hundirte. Reglas fijas de Oscar:
   Cuanto más nivel tiene la oficina, más salen raras.
 - **Bonus** (común → legendaria): alquiler +10/20/30/45 %, obras −10/15/25/35 % de coste,
   obras −15/25/40/50 % de tiempo, compras −10/15/25/35 %, +2/4/8/12 h sin conexión, **Banquero**
-  −15/25/40/60 % de interés y +50 % de préstamo.
+  −15/25/40/60 % de interés y +50 % de préstamo, **Ofertas** +15/25/40/60 % eventos (llegan
+  antes) y **Mañoso** +15/25/40/60 % de paga en los encargos (punto 10).
 - No suben de nivel: se mejora contratando uno mejor (sencillo, de un vistazo).
 - Retratos: 16x16 píxeles hechos con matemáticas (piel, pelo, ojos, gafas, bigote, traje y
   corbata o blusa), solo colores de la paleta, con borde de tinta, dibujados x2, x4 o x6 en un
@@ -172,8 +176,10 @@ Para ir más rápido, nunca para hundirte. Reglas fijas de Oscar:
 - Reloj hacia atrás: el juego sigue con su propio cronómetro y nunca cobra dos veces lo mismo;
   un reloj adelantado solo gasta tu propio cobro sin conexión (con su tope).
 - **Se guarda** en `user://save.json` (los datos de prueba en `save_fixture.json`): dinero,
-  banco, y por oficina su nivel, terrenos, obras con su hora de fin, constructor y gerente. Al
-  cambiar algo, cada 30 s y al cerrar. Una partida rota empieza de nuevo sin colgarse.
+  banco, y por oficina su nivel, terrenos, obras con su hora de fin, constructor y gerente; y los
+  eventos: el que espera en cada oficina, el inquilino VIP de un terreno y la obra exprés de una
+  oficina siguen ahí al volver a abrir. Al cambiar algo, cada 30 s y al cerrar. Una partida rota
+  empieza de nuevo sin colgarse. (Versión 3; una partida de antes empieza los eventos de cero.)
 - El juego se abre directamente en la última oficina vista.
 
 ## 9. Pantalla
@@ -191,9 +197,117 @@ Para ir más rápido, nunca para hundirte. Reglas fijas de Oscar:
   $X · ~4 min, sube la oficina para llegar, grúas ocupadas, tarda 2 min).
 - **Banco** y **Tu oficina** (con sus páginas OFICINA y GERENTE): pantallas completas con volver
   y título, como todas.
+- **Eventos**: una franja bajo la cabecera y un bocadillo sobre el terreno (punto 10).
 - Todo lo que se pulsa mide al menos 44 px de lienzo.
 
-## 10. Lo que dice la simulación (Valencia, el Botànic; 130 terrenos)
+## 10. Eventos: jugar activo te adelanta, no jugar no te quita nada
+
+Idea de Oscar: cuando te bajas el juego quieres jugar un rato activo, así que tiene que haber
+cosas que hacer que empujen; luego el juego sigue solo con muy poco esfuerzo (entrar, comprar 4
+cosas, irse). Reglas acordadas: jugar activo acelera pero nunca es obligatorio; los premios se
+pagan en **minutos de tus ingresos** (valen igual al principio que al final); con tope, para que
+el activo vaya más o menos al doble que el del widget, no a diez veces; sin rachas diarias, sin
+castigos, sin más reloj que lo que dura el evento.
+
+- **Cuándo salen**: solo mientras miras el juego: la ventana tiene el foco y has movido el ratón
+  en los últimos 3 min, o el ratón se mueve por encima de la ventana en los últimos 30 s. Uno
+  cada **1-3 min de juego activo** (el primero al minuto de empezar). Cada evento espera
+  **1-2 min de juego activo**: si te vas, se queda esperando y sigue ahí cuando vuelves, pero
+  nunca más de uno por oficina. Sin conexión no sale ninguno.
+- **Ignorarlo no cuesta nada**: se va solo cuando se acaba su tiempo, o con la X.
+- **Cómo se ven** (Oscar: "aunque sea un banner arriba"): una **franja** que entra deslizándose
+  bajo la cabecera, a la izquierda de los botones de zoom, sin tapar el centro del mapa: icono,
+  una línea ("OFERTA -50%", "VÁTER ATASCADO"), de qué trata ("SOLAR EN CARRER D'ARAGÓ"), los
+  segundos que le quedan y una barrita dorada que se acorta. Su botón lo coge (el precio rebajado,
+  ACTIVAR, ACEPTAR, +$X, AYUDAR); la **X** lo descarta; tocar la franja te lleva al terreno y abre
+  su ficha (un encargo abre el encargo). Sobre el terreno, un **bocadillo dorado** con el mismo
+  icono; en la ficha, una línea dorada dice la oferta. El aviso de "¡Comprado!" baja debajo de la
+  franja mientras está.
+- **Nunca te roba un clic**: no toca la cabecera ni los botones de la derecha; durante 0,6 s
+  después de aparecer, un clic en su sitio va al mapa como si no estuviera; comprar desde ella
+  tiene las mismas protecciones que la ficha (ni el clic que da el foco a la ventana ni el segundo
+  toque de un doble clic) y se puede **deshacer** 6 s. A 200 px se usa igual.
+
+### Ofertas flash (un toque)
+
+| Oferta | Qué hace | Cuándo sale |
+|---|---|---|
+| **Oferta -30/40/50 %** | Un terreno en venta de tu radio, rebajado mientras dura el evento (la ficha dice "antes $X") | Solo en terrenos que podrías comprar ya o en un par de minutos: una ganga muy por encima de tu dinero te saltaría el juego. El ahorro vale entre 0,5 y 6 min de ingresos |
+| **Obra exprés** | Al activarla, tu próxima obra en esa oficina en 2 min tarda **la mitad** (como mucho 30 min menos); la franja lo recuerda | Con una grúa libre y una obra de más de 1 min que puedas pagar |
+| **Inquilino VIP** | Un edificio tuyo paga **el doble** 10 min (menos si es muy grande: el extra nunca pasa de 4 min de ingresos); una estrella con el tiempo flota sobre él | Con edificios tuyos sin obras |
+| **Comprador con prisa** | Quiere una opción sobre uno de tus terrenos: **2-4 min de ingresos** al momento | Con edificios tuyos |
+
+### Encargos de inquilinos (minijuegos)
+
+Un inquilino de uno de tus edificios pide ayuda. **AYUDAR** abre el encargo a pantalla completa,
+como el banco, con volver. Antes de empezar se ve lo que paga: **perfecto, 4 min de ingresos**; a
+medias, en proporción; aunque salga mal, el **15 %**. Nunca se pierde nada: volver a mitad termina
+el encargo con lo hecho y cobra. Duran **15 s** (con un "¡YA!" antes, para que el toque de EMPEZAR
+no cuente). Nunca sale el mismo minijuego dos veces seguidas. Al final, de una a tres estrellas.
+
+- **Váter atascado**: una marca va y viene por una barra; pulsa (en cualquier sitio o en
+  ¡EMPUJA!) cuando pase por la zona dorada. 6 aciertos lo desatascan: el desatascador baja, el
+  agua marrón baja y se aclara ("¡GLUB!") y al final tira de la cadena. Fallar salpica ("¡CHOF!")
+  y el desatascador tarda 0,7 s en estar listo: aporrear no sirve. Cada acierto la zona se
+  estrecha y la marca acelera, sin pasar de una décima de segundo en la zona: pide ritmo, no
+  reflejos.
+- **Sin luz en casa**: un cuadro eléctrico con 4 cables de colores a la izquierda y sus enchufes
+  desordenados a la derecha, como en Among Us. Toca un cable y luego su enchufe (o al revés), o
+  **arrástralo** hasta él; uno equivocado parpadea en rojo y el cable sigue en tu mano. Cada color
+  lleva también su forma (cuadrado, triángulo, rombo, círculo) para no depender del color. Con los
+  4, se enciende la lámpara.
+- **Bombillas fundidas**: la fachada de tu edificio de noche, ventanas doradas; las apagadas
+  tienen la bombilla fundida colgando: tócalas para cambiarla. Se van fundiendo más (cada una
+  parpadea antes de apagarse); cambia todas. Si las cambias todas antes de tiempo, se acaba.
+
+### El tope y los gerentes
+
+- Todo lo que pagan los eventos (encargos, comprador, el extra del VIP, lo que ahorra una oferta)
+  sale de un **cubo de 20 min de ingresos por hora**, que se rellena a ese ritmo también con el
+  juego cerrado. Una partida nueva empieza con **6 min** en el cubo, y ningún premio vale más
+  del **20 % de todo lo ganado** hasta entonces: los primeros minutos crecen tan deprisa que un
+  premio entonces vale muchísimo tiempo. Lo que no coges vuelve al cubo. Con el cubo casi vacío
+  salen menos eventos (no eventos con premios ridículos).
+- **Ofertas** (gerente): los eventos llegan antes. **Mañoso**: los encargos pagan más.
+
+### Lo que dice la simulación
+
+`econ_sim` tiene un jugador **activo**: el del widget (abierto 16 h, un vistazo por hora) más una
+sesión de juego activo al día (**1 h el primer día, 30 min los demás**) en la que juega como el
+ideal y atiende los eventos como una persona: coge el 80 % (tarda 8 s en reaccionar), hace los
+encargos perfectos la mitad de las veces, casi siempre bien y alguno mal. Se mira en 5 partidas
+(la suerte de qué evento sale cuándo mueve mucho un hito suelto) y se compara con el del widget.
+
+Valencia, el Botànic (130 terrenos), media de 5 partidas del activo:
+
+| Hito | Widget | Activo con eventos | Cuántas veces antes | Activo sin eventos |
+|---|---|---|---|---|
+| Primera Urbanización | 11 min | 11 min | 1,1x | 1,0x |
+| Primer Bloque | 1 h 22 min | 29 min | 2,9x | 2,2x |
+| Oficina Nv 3 | 4 h 10 min | 1 h 29 min | 2,8x | 2,1x |
+| Primeras Torres | 6 h 47 min | 3 h 36 min | 1,9x | 1,5x |
+| Oficina Nv 4 | 1 d 10 h | 1 d 7 h | 1,1x | 1,0x |
+| Primer Rascacielos | 22 h 32 min | 19 h 28 min | 1,2x | 1,1x |
+| Oficina Nv 5 · todo el radio · todo al máximo | 5 d 5 h · 6 d 2 h · 8 d 13 h | 5 d 0 h · 5 d 2 h · 8 d 8 h | 1,0-1,2x | 0,9-1,0x |
+
+- De media **1,7x** más rápido que el del widget (en la zona de prueba 1,6x); ningún hito pasa de
+  **3x** de media. La partida con más suerte llega a ~4x en el primer Bloque o el Nv 3: un evento
+  bueno en el momento justo (el del widget no mira entre los minutos 10 y 70, así que cualquier
+  cosa en ese rato cuenta mucho).
+- Lo que ponen los eventos solos (activo con eventos frente a activo sin ellos): ~1,3x en las
+  primeras horas, casi nada después; el resto es jugar activo.
+- El final (Nv 5, todo el radio, todo al máximo) lo marcan las **grúas** (tres obras a la vez,
+  rascacielos de 3 h): llega a la vez para todos, con eventos o sin ellos, así que no cuenta para
+  la media.
+- En 28 días el activo vio 360 eventos (unos 13 al día, casi todos en sus sesiones), cogió 292,
+  hizo 167 encargos (nota media 0,76) y los eventos le pagaron $92,5MM.
+- Para que el arranque no se dispare: el cubo empieza con 6 min y **ningún premio vale más del
+  20 % de todo lo que has ganado** hasta entonces (en la primera media hora unos minutos de
+  ingresos son media partida; después ese límite no se nota). Y las ofertas son de terrenos que
+  ya casi podías pagar. Sin eso, un evento con suerte daba el primer Bloque 5 veces antes.
+- El banco sigue cumpliendo: la simulación de los préstamos y del abusón no cambia.
+
+## 11. Lo que dice la simulación (Valencia, el Botànic; 130 terrenos)
 
 `godot --headless --path . --script res://tools/econ_sim.gd -- --file=<oficina.json> --days=28`
 
@@ -223,11 +337,11 @@ banco $5,9MM (unas 2 h de alquiler); llega al Nv 5 a la vez que el que se fue un
 préstamos. Después de ~9 días la oficina está completa: el siguiente objetivo es abrir otra (no
 simulado todavía).
 
-## 11. Más adelante (no está hecho)
+## 12. Más adelante (no está hecho)
 
 - **Salir a bolsa** (prestigio): vender todo por acciones que dan +% permanente.
 - **Recalificar** un terreno para pasar su límite (industrial → residencial).
-- **Eventos de un clic**, discretos: un cliente con un bocadillo sobre un tejado (cobra 2 min de
-  alquiler), una inspección, una oferta de compra.
+- **Más eventos**: una inspección, una vecina que se queja, ofertas de compra de verdad; rasgos de
+  gerente que cambien qué eventos salen.
 - **Simular varias oficinas** en `econ_sim` y ajustar sus precios.
 - **Día y noche** con ventanas encendidas.
