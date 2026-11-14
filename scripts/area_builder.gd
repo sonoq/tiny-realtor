@@ -175,17 +175,18 @@ func _gsink() -> Array:
 func _g_poly(poly: PackedVector2Array, name: String) -> void:
 	var pts := iso.poly(poly)
 	if pts.size() >= 3 and not Geometry2D.triangulate_polygon(pts).is_empty():
-		_gsink().append([Painter.OP_POLY, pts, Pal.i(name)])
+		_gsink().append([Painter.OP_POLY, pts, Pal.ground(name)])
 
 
 func _g_dot(at: Vector2, name: String) -> void:
-	_gsink().append([Painter.OP_RECT, Rect2(at, Vector2.ONE), Pal.i(name)])
+	_gsink().append([Painter.OP_RECT, Rect2(at, Vector2.ONE), Pal.ground(name)])
 
 
 func _g_line(a: Vector2, b: Vector2, name: String) -> void:
 	var sink := _gsink()
+	var idx := Pal.ground(name)
 	for r in Painter.line_runs(iso.pv(a), iso.pv(b)):
-		sink.append([Painter.OP_RECT, r, Pal.i(name)])
+		sink.append([Painter.OP_RECT, r, idx])
 
 
 func _ground_base() -> void:
@@ -953,7 +954,7 @@ func _piece(id: String, p: Dictionary, owned: bool) -> void:
 			_pt.flat(foot, z1, Pal.i("GRASS"))
 			var hedge := Iso.offset(foot, -0.9 if deck else -0.7)
 			if hedge.size() >= 3:
-				_pt.flat(hedge, z1, Pal.i("PAVE_L" if deck else "GRASS_L"))
+				_pt.flat(hedge, z1, Pal.ground("PAVE_L" if deck else "GRASS_L"))
 		Skyline.POOL:
 			_pt.flat(foot, z1, Pal.i("CREAM"))
 			var water := Iso.offset(foot, -0.6)
