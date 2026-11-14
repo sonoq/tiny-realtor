@@ -413,7 +413,11 @@ static func sanitize(g: Game, t: float) -> void:
 	e["wait"] = clampf(float(e["wait"]), 0.0, Economy.EVENT_WAIT[1])
 	e["budget"] = clampf(float(e["budget"]), 0.0, Economy.EVENT_HOUR_CAP)
 	e["n"] = maxi(0, int(e["n"])) if Game._num_ok(e.get("n")) else 0
-	if not e.get("last_game") is String:
+	# the toilet job is gone: a save from before knows it as "plunge", now the pipes
+	var last: Variant = e.get("last_game")
+	if last is String and last == "plunge":
+		e["last_game"] = "pipes"
+	elif not (last is String and Economy.JOB_GAMES.has(last)):
 		e["last_game"] = ""
 	if not e.get("log") is Array:
 		e["log"] = []
@@ -436,7 +440,9 @@ static func sanitize(g: Game, t: float) -> void:
 					ok = Game._num_ok(p.get("secs")) and Game._num_ok(p.get("x")) \
 						and g.owns(id, p["lot"])
 				"job":
-					ok = p.get("game") in Economy.JOB_GAMES and Game._num_ok(p.get("seed"))
+					if p.get("game") is String and p["game"] == "plunge":
+						p["game"] = "pipes"
+					ok = p.get("game") is String and Economy.JOB_GAMES.has(p["game"]) and Game._num_ok(p.get("seed"))
 		if not ok:
 			e["pending"].erase(id)
 			continue

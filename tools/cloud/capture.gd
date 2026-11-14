@@ -15,7 +15,8 @@ extends SceneTree
 # x16, the list a city with an office opens (its office row opens the office), Tokyo, the city list
 # and back, and the 200 px window. Last the events (`8N_event_*`, `8N_job_*`), made to order in the
 # first office: a flash sale's banner and the lot it points to, each tenant job at its start,
-# mid-play and its result, the wires solved frame by frame (`events_gif/NNN.png`, for a GIF), a
+# mid-play and its result, the wires and the pipes solved frame by frame (`events_gif/NNN.png`,
+# `pipes_gif/NNN.png`, for GIFs), a
 # VIP tenant's star and the 200 px window with a banner; the events never come on their own during
 # the capture (Events.auto off), so the other shots stay as they were. It needs a real display
 # (run it under xvfb-run, see
@@ -590,7 +591,7 @@ func _events() -> bool:
 			return false
 		view.hover(Vector2(300, 420))
 		await _wait_s(EventUi.GRACE_S + 0.2)
-		if kind == "plunge":
+		if kind == Economy.JOB_GAMES[0]:
 			await _shot("%02d_event_job_banner" % n)
 			n += 1
 		view.click(EventUi.BTN.get_center())
@@ -605,8 +606,8 @@ func _events() -> bool:
 		view.click(JobPanel.GO_BTN.get_center())
 		panel.run(JobPanel.READY_S + 0.01)
 		match kind:
-			"plunge":
-				n = await _job_plunge(view, panel, n)
+			"pipes":
+				n = await _job_pipes(view, panel, n)
 			"wires":
 				n = await _job_wires(view, panel, n)
 			"bulbs":
@@ -650,21 +651,52 @@ func _events() -> bool:
 	return true
 
 
-# the plunger through the real input path: a push whenever the marker is well inside the zone
-func _job_plunge(view: OfficeView, panel: JobPanel, n: int) -> int:
-	var p := panel.job as PlungeGame
-	var guard := 0
-	while panel.page == JobPanel.PLAY and guard < 4000:
-		guard += 1
-		panel.run(1.0 / 60.0)
-		var z := p.zone()
-		if not p.over and p.ready_to_push() and p.marker() > z.x + 0.02 and p.marker() < z.y - 0.02:
-			view.press(PlungeGame.PUSH.get_center())
-			if p.good == 3:
-				panel.run(0.15)
-				view.hover(PlungeGame.PUSH.get_center())
-				await _shot("%02d_job_plunge_mid" % n)
-				n += 1
+# the pipes through the real input path, filmed a frame a step: a look at each piece of the way
+# (and one wrong turn on a piece off it), then its taps; the shot mid-play when half the way runs
+func _job_pipes(view: OfficeView, panel: JobPanel, n: int) -> int:
+	var p := panel.job as PipesGame
+	var gif := _out + "/pipes_gif"
+	DirAccess.make_dir_recursive_absolute(gif)
+	for f in DirAccess.get_files_at(gif):
+		DirAccess.remove_absolute(gif.path_join(f))
+	var frame := [0]
+	var film := func(steps: int) -> void:
+		for _q in steps:
+			panel.run(1.0 / 15.0)
+			await _frame_to("%s/%03d.png" % [gif, frame[0]])
+			frame[0] += 1
+	view.hover(Vector2(300, 520))
+	await film.call(4)
+	var shot := false
+	for i in p.path.size():
+		var k: int = p.path[i]
+		var at := p.tile_rect(k).get_center()
+		# the third piece: first a wrong one turned, a piece next to it off the way
+		if i == 2:
+			for j in PipesGame.COLS * PipesGame.ROWS:
+				if p.sol[j] < 0 and absi(j % PipesGame.COLS - k % PipesGame.COLS) + absi(j
+						/ PipesGame.COLS - k / PipesGame.COLS) == 1:
+					view.hover(p.tile_rect(j).get_center())
+					await film.call(2)
+					view.press(p.tile_rect(j).get_center())
+					await film.call(2)
+					break
+		view.hover(at)
+		await film.call(2)
+		for _n in p.turns_needed(k):
+			view.press(at)
+			await film.call(2)
+		if not shot and p.wet_path() * 2 >= p.path.size():
+			await film.call(3)
+			await _shot("%02d_job_pipes_mid" % n)
+			n += 1
+			shot = true
+	while panel.page == JobPanel.PLAY:
+		await film.call(1)
+	for _q in 6:
+		await _frame_to("%s/%03d.png" % [gif, frame[0]])
+		frame[0] += 1
+	print("GIF %d frames -> %s (ffmpeg -framerate 12 -i %s/%%03d.png ...)" % [frame[0], gif, gif])
 	return n
 
 
