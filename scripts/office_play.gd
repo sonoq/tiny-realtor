@@ -10,8 +10,9 @@ extends Node2D
 # borrows. A purchase or works can be undone for a few seconds. The bank and the office tab
 # (level, builder, manager: the office has no building of its own) are full-window panels
 # (BankPanel, OfficePanel), the tab also opened by the level line and the office's pin on the
-# map; coming back after a while shows what was earned away.
-# OfficeView hands it every input first (press / click / hover / back); true = taken.
+# map; coming back after a while shows what was earned away. The events (EventUi: a banner under
+# the header and a bubble over the lot; a tenant job opens JobPanel) ride on it too.
+# OfficeView hands it every input first (press / click / drag / hover / back); true = taken.
 
 const MONEY_AT := Vector2(588, 40)
 const ZOOM_IN := Rect2(536, 88, 52, 52)
@@ -76,6 +77,7 @@ var _last_tap_at := Vector2(-100, -100)
 var _away_since := -1.0
 var _cash := ""
 var _cash_t := 0.0
+var events_ui: EventUi
 
 
 func setup(the_view: OfficeView, the_game: Game, office_id: String, area: Dictionary) -> void:
@@ -87,6 +89,7 @@ func setup(the_view: OfficeView, the_game: Game, office_id: String, area: Dictio
 	for i in infos.size():
 		index[infos[i]["id"]] = i
 	_shown_level = game.level(id)
+	events_ui = EventUi.new(self)
 
 
 func _process(delta: float) -> void:
@@ -97,6 +100,14 @@ func _process(delta: float) -> void:
 	game.news.clear()
 	if not game.away.is_empty() and _away_since < 0.0:
 		_away_since = _clock
+	# events only come and go while the map is in front of the player
+	if _panel == null and game.away.is_empty() and view.is_drawn():
+		events_ui.tick(delta)
+	# a minigame runs every frame
+	if _panel != null and _panel.has_method("step"):
+		_panel.call("step", delta)
+		if _panel.call("live"):
+			queue_redraw()
 	if _clock >= _toast_until and not _toasts.is_empty():
 		_toast = _toasts.pop_front()
 		_toast_until = _clock + TOAST_S
@@ -131,16 +142,42 @@ func blocks_map() -> bool:
 
 func press(at: Vector2) -> bool:
 	if blocks_map():
+		# a minigame acts on the press, so its timing feels immediate
+		if _panel != null and _panel.has_method("press"):
+			_panel.call("press", at)
 		return true
 	return ZOOM_IN.has_point(at) or ZOOM_OUT.has_point(at) or _buttons_shown() \
 		and (BANK_BTN.has_point(at) or OFFICE_BTN.has_point(at)) \
-		or _undo_visible() and UNDO_BTN.has_point(at)
+		or _undo_visible() and _undo_rect().has_point(at)
 
 
-# the cards, the toast and the bottom bars: a drag that starts on them does not pan the map
+# moved while held: only a panel's minigame cares (dragging a wire)
+func drag(at: Vector2) -> void:
+	hot = at
+	if _panel != null and _panel.has_method("drag"):
+		_panel.set("hot", at)
+		_panel.call("drag", at)
+
+
+# the cards, the toast, the event banner and the bottom bars: a drag that starts on them does not
+# pan the map
 func over_ui(at: Vector2) -> bool:
 	return view.is_card_open() and CARD.has_point(at) or at.y >= NEXT.position.y \
-		or (_clock < _toast_until or _undo_visible()) and TOAST.has_point(at)
+		or (_clock < _toast_until or _undo_visible()) and _toast_rect().has_point(at) \
+		or events_ui.over(at)
+
+
+# the toast sits under the event banner while one shows
+func _toast_rect() -> Rect2:
+	return Rect2(TOAST.position + _toast_shift(), TOAST.size)
+
+
+func _undo_rect() -> Rect2:
+	return Rect2(UNDO_BTN.position + _toast_shift(), UNDO_BTN.size)
+
+
+func _toast_shift() -> Vector2:
+	return Vector2(0, EventUi.BANNER.size.y + 6.0) if events_ui.visible() else Vector2.ZERO
 
 
 # the bank and office buttons hide under an open card
@@ -150,6 +187,7 @@ func _buttons_shown() -> bool:
 
 func hover(at: Vector2) -> void:
 	hot = at
+	events_ui.pointer(at)
 	if _panel != null:
 		_panel.set("hot", at)
 	queue_redraw()
@@ -182,7 +220,10 @@ func click(at: Vector2) -> bool:
 		_best_t = -1.0
 		queue_redraw()
 		return true
-	if _undo_visible() and UNDO_BTN.has_point(at):
+	var fresh := now_ms - App.focus_ms < FOCUS_GRACE_MS
+	if events_ui.click(at, fresh or double):
+		return true
+	if _undo_visible() and _undo_rect().has_point(at):
 		_do_undo()
 		return true
 	if ZOOM_IN.has_point(at):
@@ -198,7 +239,6 @@ func click(at: Vector2) -> bool:
 		open_panel("office")
 		return true
 	if view.is_card_open() and CARD.has_point(at):
-		var fresh := now_ms - App.focus_ms < FOCUS_GRACE_MS
 		# the rent and works are brought up to date before anything is bought
 		view.sync()
 		if CARD_X.has_point(at):
@@ -210,7 +250,7 @@ func click(at: Vector2) -> bool:
 		queue_redraw()
 		return true
 	# the toast's body is not the map
-	if (_clock < _toast_until or _undo_visible()) and TOAST.has_point(at):
+	if (_clock < _toast_until or _undo_visible()) and _toast_rect().has_point(at):
 		return true
 	if not view.is_card_open() and NEXT.has_point(at):
 		_follow_best()
@@ -254,7 +294,28 @@ func panel_kind() -> String:
 		return "bank"
 	if _panel is OfficePanel:
 		return "office"
+	if _panel is JobPanel:
+		return "job"
 	return ""
+
+
+# a tenant job's panel (from the event banner)
+func open_job(ev: Dictionary) -> void:
+	_undo = {}
+	view.select(-1)
+	var i: int = index.get(ev.get("lot", ""), -1)
+	_panel = JobPanel.new(game, id, ev, street_of(i) if i >= 0 else "tu edificio")
+	_panel.set("hot", hot)
+	queue_redraw()
+
+
+# the event banner buys a lot on sale: as the card's button would, with its undo
+func event_buy(i: int) -> void:
+	_buy(i)
+
+
+func street_of(i: int) -> String:
+	return _street(i)
 
 
 # --- actions -----------------------------------------------------------------------------------
@@ -272,6 +333,9 @@ func _card_buttons(i: int) -> Array:
 		var price := game.buy_price(id, info)
 		var why := game.can_buy(id, info)
 		var main := ["COMPRAR " + Economy.money(price), why == "", _buy.bind(i), _short(why, price)]
+		var cut := Events.sale_cut(game, id, lid)
+		if cut > 0.0 and why == "":
+			main[3] = "Oferta flash: antes " + Economy.money(price / (1.0 - cut))
 		if why == "Fuera de tu radio":
 			main = ["VER TU OFICINA", true, open_panel.bind("office"),
 				"Fuera de tu radio: sube la oficina para llegar"]
@@ -289,14 +353,14 @@ func _card_buttons(i: int) -> Array:
 	var why := game.can_build(id, lid, to)
 	var main := ["Construir %s · %s" % [_tier_caps(to, true), Economy.money(c)], why == "",
 		_build.bind(i, to),
-		_short(why, c) if why != "" else "Tarda " + Economy.duration(game.build_time(id,
-		int(l["t"]), to))]
+		_short(why, c) if why != "" else "Tarda " + Economy.duration(Events.express_time(game, id,
+		game.build_time(id, int(l["t"]), to)))]
 	var top := game.best_target(id, lid)
 	var side := none
 	if why == "" and top > to:
 		side = ["HASTA %s %s" % [_tier_caps(top, true), Economy.money(game.build_cost(id, l,
 			top))], true, _build.bind(i, top), "Directo a %s: tarda %s" % [Economy.TIER_NAMES[top],
-			Economy.duration(game.build_time(id, int(l["t"]), top))]]
+			Economy.duration(Events.express_time(game, id, game.build_time(id, int(l["t"]), top)))]]
 	elif why.begins_with("Te faltan"):
 		side = _loan_button(i, c, _build.bind(i, to, false))
 	return [main, side]
@@ -544,6 +608,8 @@ func _draw() -> void:
 	if view.is_drawn():
 		_draw_markers()
 		_draw_pops()
+		events_ui.draw_marks(self, Rect2(8, OfficeView.MAP_TOP, 520, NEXT.position.y
+			- OfficeView.MAP_TOP - 8))
 	_draw_money()
 	Ui.arrow(self, ZOOM_OUT, "-", hot, view.zoom_step() == 0)
 	Ui.arrow(self, ZOOM_IN, "+", hot, view.zoom_step() == OfficeView.ZOOMS.size() - 1)
@@ -555,6 +621,7 @@ func _draw() -> void:
 	else:
 		_draw_next()
 	_draw_level()
+	events_ui.draw(self)
 	if _clock < _toast_until or _undo_visible():
 		_draw_toast()
 	if not game.away.is_empty():
@@ -775,14 +842,15 @@ func _draw_level() -> void:
 
 
 func _draw_toast() -> void:
-	Ui.plate(self, TOAST, Ui.PLATE, Ui.GOLD, 13)
+	var r := _toast_rect()
+	Ui.plate(self, r, Ui.PLATE, Ui.GOLD, 13)
 	var text := _toast if _clock < _toast_until else ""
 	if _undo_visible():
-		Ui.button(self, UNDO_BTN, "Deshacer", hot)
-		_fit(TOAST.position + Vector2(14, 33), text, UNDO_BTN.position.x - TOAST.position.x - 22,
-			Ui.CREAM)
+		var u := _undo_rect()
+		Ui.button(self, u, "Deshacer", hot)
+		_fit(r.position + Vector2(14, 33), text, u.position.x - r.position.x - 22, Ui.CREAM)
 	else:
-		_fit(TOAST.position + Vector2(14, 33), text, TOAST.size.x - 28, Ui.CREAM)
+		_fit(r.position + Vector2(14, 33), text, r.size.x - 28, Ui.CREAM)
 
 
 func _draw_away() -> void:
@@ -836,7 +904,13 @@ func _draw_card(i: int) -> void:
 		mods += ("%s%s %+d%%" % [" · " if mods != "" else "", m[0], roundi(float(m[1]) * 100.0)])
 	if mods == "":
 		mods = "Sin extras"
-	_fit(Vector2(x, y + 62), mods, CARD.size.x - 36, Ui.MINT if mods != "Sin extras" else Ui.MUTED)
+	# an event about this lot says so where its extras go
+	var line := events_ui.card_line(i)
+	if not line.is_empty():
+		_fit(Vector2(x, y + 62), line[0], CARD.size.x - 36, line[1])
+	else:
+		_fit(Vector2(x, y + 62), mods, CARD.size.x - 36, Ui.MINT if mods != "Sin extras"
+			else Ui.MUTED)
 	var rent := game.lot_rent(id, l) if not l.is_empty() else Economy.rent(tier, info)
 	if rent > 0.0:
 		Ui.text(self, Vector2(x, y + 92), "Alquiler %s/min" % Economy.money(rent), Ui.TEXT,
