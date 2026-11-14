@@ -3,8 +3,9 @@ extends SceneTree
 # Boots the real game (res://main.tscn) and drives the whole map flow like a player, saving a PNG
 # at each step: the city list, Barcelona's map, the office cursor, the confirm box, the download,
 # the office view, pointing at a lot and selecting another (its card); a second office in Tokyo
-# and a third in Warsaw; and the red "too close" cursor; then the busy-server screen. It needs a real display (run it under xvfb-run, see tools/cloud/screenshot.sh), because
-# a headless run renders nothing a viewport could hand back.
+# and a third in Warsaw; and the red "too close" cursor; then the busy-server screen, and the first
+# office again close up on its moving traffic. It needs a real display (run it under xvfb-run, see
+# tools/cloud/screenshot.sh), because a headless run renders nothing a viewport could hand back.
 #
 #   godot --path . --rendering-driver opengl3 --audio-driver Dummy \
 #       --script res://tools/cloud/capture.gd -- --out=/abs/dir [--fixture] [--fresh] \
@@ -117,6 +118,9 @@ func _init() -> void:
 	_app._show(busy)
 	await _frames(3)
 	await _shot("%02d_server_busy" % n)
+	n += 1
+	if not await _traffic(n):
+		return
 	print("DONE %d shots -> %s" % [_shots, ProjectSettings.globalize_path(_out)])
 	for o in Store.offices():
 		print("STATS %s %s" % [o["id"], JSON.stringify(o.get("stats", {}))])
@@ -148,6 +152,34 @@ func _lots(view: OfficeView, tag: String, n: int) -> int:
 		_fail("Esc did not close the lot card")
 	view.hover(Vector2(-100, -100))
 	return n
+
+
+# the first office again, close up (x3) on the car moving nearest the office
+func _traffic(n: int) -> bool:
+	_app.open_office(Store.offices()[0])
+	if not await _wait_for("OfficeView"):
+		return false
+	var view := _app.screen as OfficeView
+	if not await _wait_drawn(view):
+		return false
+	var traffic: Traffic = view._traffic
+	while not traffic.is_drawing():
+		await process_frame
+	if traffic.count == 0:
+		_fail("no traffic in the office")
+		return false
+	await _frames(20)
+	var best := 0
+	for i in traffic.count:
+		if traffic.v[i] > 1.0 and traffic.pos[i].length() < traffic.pos[best].length():
+			best = i
+	view.set_zoom_step(2)
+	var at := view._pan + view._view.project(traffic.pos[best]) * 3.0
+	view.pan_by(Vector2(300, 330) - at)
+	await _frames(2)
+	await _shot("%02d_office_traffic" % n)
+	print("TRAFFIC %d cars, %d lanes" % [traffic.count, traffic.net.lane_count])
+	return true
 
 
 # waits until the app shows a screen of this class; false (and quits) on a failure or timeout

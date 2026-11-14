@@ -77,6 +77,7 @@ var _rng := RandomNumberGenerator.new()
 var _origin := Vector2.ZERO
 var _view := Rect2()
 var _centre := Vector2.ZERO
+var _have_view := false
 var _reach := 300.0
 var _acc := 0.0
 var _clock := 0
@@ -179,8 +180,10 @@ func set_view(rect: Rect2) -> void:
 	for corner: Vector2 in [rect.position, rect.end, Vector2(rect.position.x, rect.end.y),
 			Vector2(rect.end.x, rect.position.y)]:
 		far = maxf(far, c.distance_to(_ground(corner)))
-	if c.distance_to(_centre) < 15.0 and absf(far * 0.85 - _reach + REGION_PAD) < 15.0:
+	if _have_view and c.distance_to(_centre) < 15.0 \
+			and absf(far * 0.85 - _reach + REGION_PAD) < 15.0:
 		return
+	_have_view = true
 	_centre = c
 	_reach = far * 0.85 + REGION_PAD
 	var want := 0.0

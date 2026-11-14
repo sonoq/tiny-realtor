@@ -75,7 +75,8 @@ static func build(host: Node) -> void:
 	vp.size = size
 	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	vp.add_child(canvas)
-	host.add_child(vp)
+	# under the root, so the screen that asked can close meanwhile
+	host.get_tree().root.add_child(vp)
 	await RenderingServer.frame_post_draw
 	var img := vp.get_texture().get_image()
 	vp.queue_free()

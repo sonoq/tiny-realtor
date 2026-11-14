@@ -2,9 +2,12 @@ extends SceneTree
 
 # Opens a saved office in the real game (App + OfficeView) and films its traffic, with the clock
 # stopped between frames so every run shoots the same moments:
-#   junction_NN.png  - frames 2 ticks apart at x2 around the busiest junction near the office,
-#                      and junction_sheet.png, a contact sheet of their middles
-#   gif/NNN.png      - a longer run of the same frames, for an animated GIF (see --gif)
+#   gif/NNN.png      - frames one tick (0.1 s) apart at x2 around the busiest junction near the
+#                      office, for an animated GIF:
+#                      ffmpeg -framerate 10 -i gif/%03d.png -vf "split[a][b];[a]palettegen[p];\
+#                          [b][p]paletteuse" traffic.gif
+#   junction_NN.png  - every third of them (0.3 s apart), and junction_sheet.png, a contact
+#                      sheet of their middles
 #   hidden.png       - a car half hidden behind a building at x3, beside the same frame with the
 #                      depth test off (the car drawn over everything)
 # then times frames with the traffic on and off (max fps lifted) and prints BENCH lines.
@@ -12,7 +15,7 @@ extends SceneTree
 #
 #   godot --path . --rendering-driver opengl3 --audio-driver Dummy \
 #       --script res://tools/cloud/traffic_frames.gd -- --file=/abs/office.json --out=/abs/dir \
-#       [--frames=12] [--gif=60] [--bench=6]
+#       [--frames=12] [--gif=80] [--bench=6]
 
 const SHEET_CROP := Vector2i(240, 240)
 
@@ -23,7 +26,7 @@ var _app: App
 func _init() -> void:
 	var file := ""
 	var frames := 12
-	var gif := 60
+	var gif := 80
 	var bench := 6.0
 	for arg: String in OS.get_cmdline_user_args():
 		if arg.begins_with("--out="):
@@ -72,13 +75,14 @@ func _init() -> void:
 	await _frames(2)
 	var sheet := Image.create(SHEET_CROP.x * 4, SHEET_CROP.y * ceili(frames / 4.0), false,
 		Image.FORMAT_RGBA8)
-	for k in maxi(frames, gif):
-		traffic.run(2)
+	for k in maxi(frames * 3, gif):
+		traffic.run(1)
 		var img := await _grab()
-		if k < frames:
-			img.save_png("%s/junction_%02d.png" % [_out, k])
+		if k % 3 == 0 and k / 3 < frames:
+			var f := k / 3
+			img.save_png("%s/junction_%02d.png" % [_out, f])
 			var at := Vector2i(300, 330) - SHEET_CROP / 2
-			sheet.blit_rect(img, Rect2i(at, SHEET_CROP), Vector2i(k % 4, k / 4) * SHEET_CROP)
+			sheet.blit_rect(img, Rect2i(at, SHEET_CROP), Vector2i(f % 4, f / 4) * SHEET_CROP)
 		if k < gif:
 			img.save_png("%s/gif/%03d.png" % [_out, k])
 	sheet.save_png(_out + "/junction_sheet.png")
