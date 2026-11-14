@@ -58,6 +58,8 @@ const ZONES := {"residential": "residential", "commercial": "commercial", "retai
 # share of lots that start built, by zone, and how much a block may differ from it
 const BUILT := {"residential": 0.62, "commercial": 0.7, "industrial": 0.45}
 const BUILT_SPREAD := 0.3
+# empty lots a new office always finds within its first radius (docs/GAMEPLAY.md)
+const START_SOLARES := 3
 # tiers from docs/DESIGN.md: 0 solar, 1 casa, 2 urbanizacion, 3 bloque, 4 torre, 5 rascacielos
 const TIER_LEVELS := [Vector2i(0, 0), Vector2i(1, 2), Vector2i(2, 3), Vector2i(4, 7),
 	Vector2i(9, 15), Vector2i(20, 35)]
@@ -501,18 +503,18 @@ static func parcel(blocks: Array[Dictionary], roads: Array[Dictionary], radius: 
 			var face := _frontage(lot, names, radius)
 			var id := "%s_%d" % [bid, lots.size()]
 			var tier := _start_tier(id, zone, density, face["major"])
-			var lv: Vector2i = TIER_LEVELS[tier]
 			var streets: Array = face["streets"]
 			lots.append({"id": id, "block": bid, "poly": lot,
 				"street": streets[0] if not streets.is_empty() else "", "streets": streets,
 				"corner": face["corner"], "fronts": face["fronts"], "zone": zone,
 				"front_m": snappedf(face["length"], 0.1), "area_m2": roundi(absf(Geo.area(lot))),
-				"built_tier": tier, "levels": lv.x + int(_h01(id + "lv") * (lv.y - lv.x + 1)),
+				"built_tier": tier, "levels": levels_for(id, tier),
 				"owned": false})
 	var office := _office_plot(lots)
 	if office >= 0:
 		lots[office]["built_tier"] = 3
 		lots[office]["levels"] = maxi(5, int(lots[office]["levels"]))
+	_clear_start(lots, office)
 	var built := 0
 	for p in lots:
 		if int(p["built_tier"]) > 0:
@@ -607,6 +609,28 @@ static func _start_tier(id: String, zone: String, density: float, major: bool) -
 	if roll < 0.3:
 		return 1
 	return 2 if roll < 0.45 else 3
+
+
+# a new office needs cheap lots to start with: within the first level's radius at least
+# START_SOLARES lots are empty (solares); the smallest built ones are cleared when there are fewer
+static func _clear_start(lots: Array[Dictionary], office: int) -> void:
+	var near: Array[int] = []
+	var empty := 0
+	for i in lots.size():
+		if i == office or Iso.centroid(lots[i]["poly"]).length() > Rules.ACTIVE_RADIUS[0]:
+			continue
+		if int(lots[i]["built_tier"]) == 0:
+			empty += 1
+		else:
+			near.append(i)
+	near.sort_custom(func(a: int, b: int) -> bool:
+		return float(lots[a]["area_m2"]) < float(lots[b]["area_m2"]))
+	for i in near:
+		if empty >= START_SOLARES:
+			break
+		lots[i]["built_tier"] = 0
+		lots[i]["levels"] = 0
+		empty += 1
 
 
 # the lot under the clicked point, else the one whose edge is nearest, within 80 m; -1 when
@@ -711,6 +735,13 @@ static func _ring(poly: PackedVector2Array) -> Array:
 
 static func _area_out(a: Dictionary) -> Dictionary:
 	return {"kind": a["kind"], "poly": _ring(a["poly"])}
+
+
+# how tall a lot's buildings are at a tier: the same answer the bake gives, so a lot the game
+# rebuilds at another tier gets its own stable height
+static func levels_for(id: String, tier: int) -> int:
+	var lv: Vector2i = TIER_LEVELS[clampi(tier, 0, TIER_LEVELS.size() - 1)]
+	return lv.x + int(_h01(id + "lv") * (lv.y - lv.x + 1))
 
 
 static func _h01(key: String) -> float:

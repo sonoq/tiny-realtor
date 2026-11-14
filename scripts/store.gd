@@ -5,7 +5,8 @@ extends RefCounted
 # refreshed (docs/DESIGN.md): a city map is fetched once per city, an office area once per office.
 #   user://cities/<city>.json        baked city map (roads, water, neighbourhood names)
 #   user://offices/index.json        {"offices": [office meta, ...]}
-#   user://offices/<office>.json     baked block (format tiny-realestate-block v2) + "office" meta
+#   user://offices/<office>.json     baked block (format tiny-realestate-block v3) + "office" meta
+#   user://save.json                 the player's game (Game; save_fixture.json with test data)
 
 const CITIES := "user://cities"
 const OFFICES := "user://offices"
@@ -15,10 +16,14 @@ static var _offices: Array[Dictionary] = []
 static var _loaded := false
 
 
+# null when the file is missing or not JSON (quietly: a broken save is handled by the caller)
 static func read_json(path: String) -> Variant:
 	if not FileAccess.file_exists(path):
 		return null
-	return JSON.parse_string(FileAccess.get_file_as_string(path))
+	var json := JSON.new()
+	if json.parse(FileAccess.get_file_as_string(path)) != OK:
+		return null
+	return json.data
 
 
 # writes through a temp file, so a crash mid-write never leaves half a save behind
