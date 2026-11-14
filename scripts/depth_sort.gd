@@ -5,7 +5,10 @@ extends RefCounted
 # sort by centre fails: long thin plots and oblique streets. Only objects whose screen boxes
 # overlap are compared; for each such pair a separating axis between their footprints (convex
 # hulls in (u, v)) says which one stands behind, and a topological sort turns those pairwise
-# rules into one order. Pairs with no clean answer (hulls that overlap) fall back to the centres.
+# rules into one order. Pairs with no clean answer (hulls that overlap) fall back to the centres;
+# rules that go round in a circle are broken at the farthest object in it, so the order of
+# everything else stays the same whatever circle forms elsewhere (a lot redraw sorts only the
+# objects round the lot and must agree with a fresh drawing).
 #
 # Each object is a Dictionary with "hull" (PackedVector2Array in u, v), "rect" (Rect2 on screen)
 # and "key" (u + v of its centre, bigger is nearer).
@@ -57,7 +60,22 @@ static func order(objs: Array) -> Array:
 	var out: Array = []
 	var done := PackedByteArray()
 	done.resize(n)
-	while not heap.is_empty():
+	# objects by centre, farthest first: where the rules go round in a circle (odd shapes) the
+	# farthest object left goes next and the sort carries on, so a circle only reorders itself
+	# and not everything nearer than it (that would change with every lot redrawn elsewhere)
+	var by_key: Array = []
+	var next_key := 0
+	while out.size() < n:
+		if heap.is_empty():
+			if by_key.is_empty():
+				for i in n:
+					by_key.append([objs[i]["key"], i])
+				by_key.sort()
+			while done[by_key[next_key][1]] == 1:
+				next_key += 1
+			var f: int = by_key[next_key][1]
+			indeg[f] = 0
+			_push(heap, objs[f]["key"], f)
 		var i: int = _pop(heap)
 		done[i] = 1
 		out.append(objs[i])
@@ -65,14 +83,6 @@ static func order(objs: Array) -> Array:
 			indeg[j] -= 1
 			if indeg[j] == 0:
 				_push(heap, objs[j]["key"], j)
-	if out.size() < n:
-		# a cycle (odd shapes): the rest by centre
-		var rest: Array = []
-		for i in n:
-			if done[i] == 0:
-				rest.append(objs[i])
-		rest.sort_custom(func(p: Dictionary, q: Dictionary) -> bool: return p["key"] < q["key"])
-		out.append_array(rest)
 	return out
 
 

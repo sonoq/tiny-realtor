@@ -22,6 +22,8 @@ const ROAD_CELL := 20.0
 const LANE_MIN := 1.4
 # connectors that pass closer than this (m) cross each other
 const CLEAR := 2.4
+# metres of lane a queued car takes, to tell how full a lane is
+const JAM_M := 6.5
 # top speeds by street kind (m/s): calm, so a car takes half a minute to cross the window
 const CRUISE := {
 	"motorway": 11.0, "trunk": 10.0, "primary": 8.5, "secondary": 7.5, "tertiary": 7.0,
@@ -66,6 +68,7 @@ var _side := 1.0
 var _edges: Array[Dictionary] = []
 var _conn := {}
 var _conflict := {}
+var _conflict_end := {}
 var _trims := {}
 # node -> the edges that end at it
 var _at_node := {}
@@ -179,19 +182,21 @@ func _at(path: int, s: float) -> Vector2:
 
 
 # the lane a car on `lane` takes at its end, drawn at random by `rng`: never straight back the
-# way it came unless there is nothing else, the avenues and straight on preferred
-func choose(lane: int, rng: RandomNumberGenerator) -> int:
+# way it came unless there is nothing else, the avenues and straight on preferred, and a street
+# already full of cars (`load`: cars per lane, when given) avoided, as drivers go round a jam
+func choose(lane: int, rng: RandomNumberGenerator,
+		load: PackedInt32Array = PackedInt32Array()) -> int:
 	var n := to_node[lane]
 	var outs := out_lanes[n]
 	var din := direction(lane, pts[lane].size() - 2)
 	var total := 0.0
 	for m in outs:
-		total += _weight(lane, m, din)
+		total += _weight(lane, m, din, load)
 	if total > 0.0:
 		var pick := rng.randf() * total
 		var last := -1
 		for m in outs:
-			var w := _weight(lane, m, din)
+			var w := _weight(lane, m, din, load)
 			if w <= 0.0:
 				continue
 			last = m
@@ -207,7 +212,7 @@ func choose(lane: int, rng: RandomNumberGenerator) -> int:
 	return -1
 
 
-func _weight(lane: int, m: int, din: Vector2) -> float:
+func _weight(lane: int, m: int, din: Vector2, load: PackedInt32Array) -> float:
 	# never into a street with no way out (a one-way street ending inside the disc)
 	if out_lanes[to_node[m]].is_empty() and node_rim[to_node[m]] == 0:
 		return 0.0
@@ -221,6 +226,10 @@ func _weight(lane: int, m: int, din: Vector2) -> float:
 		var a := pts[lane][pts[lane].size() - 1]
 		var off := absf((pts[m][0] - a).dot(din.orthogonal()))
 		w *= 2.5 * 4.0 / (4.0 + off * off)
+	if not load.is_empty():
+		# how full the lane is (a queued car takes about JAM_M)
+		var full := minf(1.0, load[m] * JAM_M / maxf(length[m], JAM_M))
+		w *= (1.0 - full * 0.95) * (1.0 - full * 0.95)
 	return w
 
 
@@ -321,6 +330,28 @@ func conflict(c1: int, c2: int) -> bool:
 			break
 	_conflict[key] = hit
 	return hit
+
+
+# how far along connector c1 (m) its last stretch within CLEAR of connector c2 ends, -1 when
+# they never come that close: a car on c1 whose rear is past it is out of c2's way
+func conflict_end(c1: int, c2: int) -> float:
+	var key := c1 * 65536 + c2
+	if _conflict_end.has(key):
+		return _conflict_end[key]
+	var p := pts[c1]
+	var q := pts[c2]
+	var end := -1.0
+	for i in range(p.size() - 2, -1, -1):
+		for j in q.size() - 1:
+			var cp := Geometry2D.get_closest_points_between_segments(p[i], p[i + 1], q[j],
+				q[j + 1])
+			if cp[0].distance_to(cp[1]) < CLEAR:
+				end = cum[c1][i + 1]
+				break
+		if end >= 0.0:
+			break
+	_conflict_end[key] = end
+	return end
 
 
 func path_count() -> int:
