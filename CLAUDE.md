@@ -146,6 +146,10 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   `lot_at(px)` is whatever lot is drawn there, a tower's roof included; `outline(lot)` gives
   the two pixel rings around it as runs (cached). `lots` = AreaBuilder's per-lot entries.
   `street_labels()` gives label spots for the overlay; `pops` the roofs income pops rise from.
+  A fourth pass, **depth**, replays every object in painter's order with each pixel's ground
+  depth (x - y, bigger = nearer; `depth_code()`: `(d + 1024) * 16` in r + g * 256, 0 = bare
+  ground, 65535 = price tags) as `depth_tex`, kept with the shadow mask (`shade_tex`) for
+  Traffic.
 - `area_builder.gd` (`AreaBuilder`) - a v3 area -> ops: the ground (pavement, asphalt, pedestrian
   paving, rails, parks, water, gardens, lane dashes, zebra crossings at junctions), shadows, the
   earth slab, the dashed gold ring, and each lot as a development of its tier, laid out at draw
@@ -162,7 +166,8 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   the active radius, cars, price tags (`price_tag`, `price_of`) on the nearest signed lots. All
   placement by stable hashes.
 - `painter.gd` (`Painter`) - records one object's ops (POLY, WALL, RECT, TEX) with the mockup's
-  primitives: `wall` (wall_pixels), `prism`, `face3d`, `pitched`, Bresenham `line`.
+  primitives: `wall` (wall_pixels), `prism`, `face3d`, `pitched`, Bresenham `line`. POLY ops
+  from `flat`/`face3d` carry each corner's ground depth, WALL ops their two ends' (depth pass).
 - `world_shader.gd` (`WorldShader`) - the two shaders, generated with the palette's names: the
   facade shader (walls per pixel: apartment, office, house, tower, sky, plain, skeleton,
   scaffold, slab, cab, shed, ink; sprites from the atlas) and the ground shader.
@@ -171,6 +176,51 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
 - `pal.gd` (`Pal`), `iso.gd` (`Iso`), `sprites.gd` (`Sprites`) - see "Style A".
 - `docs/prototype/` - the Python prototype (Pillow + Shapely); its `block_raw_overpass.json` is
   the hand-made Eixample sample the fixture uses. Not shipped.
+
+**Traffic** (moving cars over the office drawing; `docs/screenshots/traffic/`)
+- `road_net.gd` (`RoadNet`) - the area's roads (pedestrian streets aside) as lanes: lines split
+  where they cross or touch (`_split_crossings`), junctions under `MERGE` (8 m) apart or whose
+  boxes overlap merged;
+  a two-way edge gets one lane each way (two on 18 m+ avenues), a one-way edge (`oneway`) one
+  to three lanes its way, right-hand (left-hand for `Traffic.LEFT_HAND` countries); each lane
+  is pulled back from its junctions until clear of every street meeting it at an angle
+  (`_trim_at`). Junctions are crossed on **connectors**, cubic curves from lane end to lane
+  start, bent round the lanes' corner, re-routed via the junction when they would leave the
+  asphalt, made lazily (`connector(a, b)`); `conflict(c1, c2)` = they pass within 2.4 m (two
+  from the same lane never conflict). `choose()` picks the next lane: no U-turn unless a dead
+  end, no hairpins or "rough" curves, avenues and straight on preferred. A one-way street with
+  no way out is never chosen; at the disc's edge a street with no way on is an exit (the car
+  drives off the world). Lanes and connectors are "paths" (polyline + running
+  length) in one index space, lanes first; `CRUISE` / `DENSITY` / `PULL` per street kind.
+- `traffic.gd` (`Traffic`, a Node2D child of OfficeView's sprite, so it draws in drawing pixels
+  at the view's zoom) - up to `CAP` (80) vehicles, struct-of-arrays, simulated at `TICK`
+  (10 Hz) and interpolated + rounded to whole art pixels when drawn. Each tick: speeds from
+  where everyone is (cruise x a per-car pace, braking into the next connector's speed, gap to
+  the car ahead on the path / next two paths, `_sense` for cars ahead on other paths where
+  streets merge), then everyone moves. Junctions: a car within `LOOK` of its kerb line asks
+  (every 3rd tick) for its connector: never before the car in front on its lane, nothing
+  standing along it (`_swept_clear`; while something does the car is `held` and the others do
+  not give way to it), clear of every reserved conflicting connector, nobody free to go
+  waiting longer for a conflicting one, room on the street beyond; when that street is too
+  short to wait on, the next junction is reserved in the same go (`nxt2`). Safeguards (`_would_hit`, `_into_way`) keep footprints apart in odd
+  geometry; who waits for whose junction decides who gives way, so it never deadlocks.
+  Cars gather around the view (`set_view`): the target count is the lanes' density within
+  reach of the view's corners; a car far out of reach (or stuck 40 s) and out of sight is
+  removed, new ones start out of sight on lanes near the view (`populate()` fills and settles
+  6 s at the start). Redrawn at most 30 times a second (`DRAW_EVERY`).
+  All choices from one RandomNumberGenerator seeded by the office id. Brake lights while
+  slowing. Drawn as one `canvas_item_add_triangle_array` (preallocated quads) through its car
+  shader: atlas index -> palette, the pixel hidden where the depth pass holds something more
+  than `HIDE_TOL` (1.5 m) nearer than the car's middle, faded when the car's middle is beyond
+  the active radius and darkened per pixel in cast shadows, via the palette's tables
+  (`blend_disabled`, never off-palette).
+  `frozen` + `run(n)` let tools step it.
+- `car_sprites.gd` (`CarSprites`) - the vehicles (5 car colours, taxi, 2 vans, bus) in 16
+  headings, with and without brake lights, drawn once per session with Painter + the facade
+  shader + ink outline like AreaBuilder's parked cars, read back to palette indices.
+- AreaBuilder keeps static cars only parked at the kerb: both kerbs of 12-18 m streets (whose
+  lanes sit at 0.22 of the width from the middle), one kerb of 8.5-10 m one-way streets (one
+  lane down the middle); BlockBaker keeps each road's `oneway`.
 
 ## Style A (the look, and the rules that keep it)
 
@@ -208,7 +258,8 @@ the office. Top level: `format`, `format_version` 3, `source`, `attribution`, `c
 `rotation_deg`, `radius_m`, `seed`, `fetched`, `data_source` (`osm` | `fixture`), `stats`,
 `office_plot` (lot id or ""), `office` (the meta also kept in the index: id, city, name, lat,
 lon, level, max_radius, active_radius, created, source, stats), and the layers:
-`roads[] {name, ref, kind, width, line}`, `rails[] {kind, line}`, `greens[] {kind, poly}`,
+`roads[] {name, ref, kind, width, line, oneway?}` (`oneway` 1 = along the line, -1 = against
+it, absent = two-way; files baked before it have none), `rails[] {kind, line}`, `greens[] {kind, poly}`,
 `courts[] {kind, poly}`, `water[] {kind, poly}` (kind `sea` from coastlines), `land[]` (islands),
 `blocks[] {id, zone, poly}`, `plots[]` = the LOTS (terrenos; the name is kept from v2)
 `{id, block, poly, street, streets, corner, fronts, zone, front_m, area_m2, built_tier, levels,
@@ -242,6 +293,7 @@ bash tools/cloud/setup.sh                         # fresh container: Godot 4.7.1
 godot --headless --path . --import                # after adding/renaming files
 godot --headless --path . --quit-after 300        # boots main.tscn for 300 frames
 godot --headless --path . --script res://tools/bake_check.gd   # bakes fixtures, checks lots
+godot --headless --path . --script res://tools/traffic_check.gd # 10 simulated min of traffic
 bash tools/cloud/screenshot.sh docs/screenshots --fixture       # the whole flow on test data
 bash tools/cloud/screenshot.sh docs/screenshots --fresh         # the whole flow on real downloads
 godot --headless --path . --script res://tools/net_check.gd     # one small real download
@@ -266,6 +318,17 @@ upgraded in memory) in seconds and fails on any pixel off the palette; `--tiers`
 `<id>_tiers.png`, lots near the office rebuilt at each tier (+ sheds and the office lot), each
 outlined in gold and labelled (`docs/screenshots/tiers_valencia.png`). `docs/screenshots/style_a_side_by_side.png` is the mockup next to the
 real Barcelona office.
+
+Traffic: `traffic_check.gd [-- --file=/abs/office.json] [--minutes=10]` runs the three fixture
+areas (and any saved office) headless with the window as the game opens it and fails when a
+car leaves the street, two cars stand on each other (middles < 2 m), a car stands still over
+120 s, the traffic hardly moves, or one seed plays differently twice (~25 s). The capture ends
+with `NN_office_traffic` (the first office again at x3 on its cars).
+`tools/cloud/traffic_frames.gd -- --file=/abs/office.json --out=/abs/dir` (xvfb-run) opens an
+office in the real game with the traffic clock stopped and stepped by hand: `gif/NNN.png` at
+x2 round the busiest junction near the office (one tick apart; its header has the ffmpeg line
+that makes `traffic.gif`), `junction_sheet.png`, `hidden.png` (a car behind a building with
+and without the depth test) and `BENCH` lines (sim ms per tick, frame times traffic off / on).
 
 **Network in the cloud container**: Overpass hosts must be on the environment's allowlist. In
 this container overpass-api.de reset every TLS handshake, overpass.kumi.systems timed out and

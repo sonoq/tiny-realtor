@@ -6,6 +6,9 @@ extends RefCounted
 # shifted left, right, up and down, all in INK), then in colour, faded or not. That is the
 # mockup's "outline each sprite, then paste it" without ever reading pixels back.
 # The primitives are ports of gen_battlegrounds.py: wall (wall_pixels), prism, face3d, pitched.
+# Polygons and walls also carry the depth (x - y, bigger is nearer) of their ground points, for
+# BlockView's depth pass that lets moving cars hide behind what stands in front of them:
+#   OP_POLY [op, screen points, colour, depth per point], OP_WALL [..., Vector2(left, right)].
 
 enum { OP_POLY, OP_WALL, OP_RECT, OP_TEX }
 
@@ -31,14 +34,21 @@ func begin(seed_key: String) -> Array:
 # --- flat things -----------------------------------------------------------------------------------
 
 # a polygon already in screen pixels; skipped when rounding folded it to nothing
-func screen_poly(pts: PackedVector2Array, idx: int) -> void:
+func screen_poly(pts: PackedVector2Array, idx: int,
+		depth: PackedFloat32Array = PackedFloat32Array()) -> void:
 	if pts.size() < 3 or Geometry2D.triangulate_polygon(pts).is_empty():
 		return
-	ops.append([OP_POLY, pts, idx])
+	if depth.size() == pts.size():
+		ops.append([OP_POLY, pts, idx, depth])
+	else:
+		ops.append([OP_POLY, pts, idx])
 
 
 func flat(poly: PackedVector2Array, z: float, idx: int) -> void:
-	screen_poly(iso.poly(poly, z), idx)
+	var depth := PackedFloat32Array()
+	for q in poly:
+		depth.append(q.x - q.y)
+	screen_poly(iso.poly(poly, z), idx, depth)
 
 
 func dot(at: Vector2, idx: int) -> void:
@@ -116,7 +126,9 @@ func wall(a: Vector2, b: Vector2, z0: float, z1: float, style: int, k: int, ramp
 	var r := style | (k << 4) | ((1 << 7) if door else 0)
 	var g := ramp | (variant << 5)
 	var code := Color8(r, g, h, clampi(n, 1, 255))
-	ops.append([OP_WALL, quad, uv, code, inkless])
+	var da := a.x - a.y
+	var db := b.x - b.y
+	ops.append([OP_WALL, quad, uv, code, inkless, Vector2(db, da) if flip else Vector2(da, db)])
 
 
 # vertical walls with a facade style and a flat roof with a one-pixel parapet rim
@@ -177,9 +189,11 @@ func face3d(pts: Array[Vector3], ramp: int, inside: Vector3, plain: int = -1,
 	if idx < 0:
 		idx = Pal.ramp(ramp)[mini(3, Iso.shade(nrm) + bias)]
 	var scr := PackedVector2Array()
+	var depth := PackedFloat32Array()
 	for t in pts:
 		scr.append(iso.pi(t.x, t.y, t.z))
-	screen_poly(scr, idx)
+		depth.append(t.x - t.y)
+	screen_poly(scr, idx, depth)
 	return nrm
 
 

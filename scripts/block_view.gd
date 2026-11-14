@@ -14,13 +14,24 @@ extends Node2D
 #   3. pick:   alongside the ground pass, each lot's ground and then its buildings in painter's
 #              order, all in the lot's number (red + green * 256 = lot + 1), kept as an Image:
 #              what the player points at is whatever lot is drawn there, a tower's roof included
+#   4. depth:  alongside too, every object in painter's order again, each pixel holding the depth
+#              (x - y of the ground point under it, see depth_code) of what is drawn there, and
+#              price tags as nearest of all; kept as `depth_tex` with the shadow mask
+#              (`shade_tex`), so Traffic's moving cars hide behind whatever stands in front
 # Every pixel is a palette colour: no blending anywhere (render_mode blend_disabled).
 
 signal drawn
 
 const PAD := 12.0
 const DIRS: Array[Vector2] = [Vector2(-1, 0), Vector2(1, 0), Vector2(0, -1), Vector2(0, 1)]
-enum { MODE_GROUND, MODE_SHADOW, MODE_WORLD, MODE_PICK }
+enum { MODE_GROUND, MODE_SHADOW, MODE_WORLD, MODE_PICK, MODE_DEPTH }
+# the depth image's code: (depth + DEPTH_BIAS) * DEPTH_K in red + green * 256; 0 = bare ground,
+# DEPTH_TOP = in front of everything (price tags)
+const DEPTH_BIAS := 1024.0
+const DEPTH_K := 16.0
+const DEPTH_TOP := 65535
+# the depth handed to the depth pass for what stands in front of everything
+const DEPTH_FRONT := 1.0e5
 
 # pixel size of the whole drawing
 var size := Vector2.ZERO
@@ -41,6 +52,10 @@ var pick: Image
 # milliseconds spent building the ops and on the GPU passes, for the logs
 var build_ms := 0
 var draw_ms := 0
+# the depth pass and the cast-shadow mask, for what is drawn live over the drawing; null until
+# `drawn`
+var depth_tex: Texture2D
+var shade_tex: Texture2D
 
 var _block: Dictionary = {}
 var _radius := 0.0
@@ -101,14 +116,20 @@ func _render() -> void:
 	var g := _viewport(vs, _canvas(MODE_GROUND))
 	var s := _viewport(vs, _canvas(MODE_SHADOW))
 	var p := _viewport(vs, _canvas(MODE_PICK))
+	var depth := _canvas(MODE_DEPTH)
+	depth.material = _depth_material()
+	var d := _viewport(vs, depth)
 	await RenderingServer.frame_post_draw
 	var ground := ImageTexture.create_from_image(g.get_texture().get_image())
 	var shade := ImageTexture.create_from_image(s.get_texture().get_image())
 	pick = p.get_texture().get_image()
 	_pick_bytes = pick.get_data()
+	depth_tex = ImageTexture.create_from_image(d.get_texture().get_image())
+	shade_tex = shade
 	g.queue_free()
 	s.queue_free()
 	p.queue_free()
+	d.queue_free()
 	var under := Sprite2D.new()
 	under.centered = false
 	under.texture = ground
@@ -135,6 +156,43 @@ func _viewport(vs: Vector2i, child: Node) -> SubViewport:
 	vp.add_child(child)
 	add_child(vp)
 	return vp
+
+
+static var _depth_shader: Shader
+
+
+# writes each pixel's depth code: from UV.x on polygons and walls, from the colour on sprites
+# (whose clear pixels are skipped, as in the world pass)
+static func _depth_material() -> ShaderMaterial:
+	if _depth_shader == null:
+		_depth_shader = Shader.new()
+		_depth_shader.code = """shader_type canvas_item;
+render_mode blend_disabled;
+uniform sampler2D sprites : filter_nearest;
+void fragment() {
+	if (UV.x >= 4000.0 && UV.x < 8000.0) {
+		if (texelFetch(sprites, ivec2(floor(UV - vec2(4096.0, 0.0))), 0).a < 0.5) discard;
+		COLOR = vec4(COLOR.rgb, 1.0);
+	} else {
+		float q = clamp(floor((UV.x + %.1f) * %.1f + 0.5), 1.0, 65534.0);
+		COLOR = vec4(mod(q, 256.0) / 255.0, floor(q / 256.0) / 255.0, 0.0, 1.0);
+	}
+}
+""" % [DEPTH_BIAS, DEPTH_K]
+	var m := ShaderMaterial.new()
+	m.shader = _depth_shader
+	m.set_shader_parameter("sprites", Sprites.atlas())
+	return m
+
+
+# a ground depth (x - y, metres) as the depth image codes it
+static func depth_code(d: float) -> int:
+	return clampi(floori((d + DEPTH_BIAS) * DEPTH_K + 0.5), 1, DEPTH_TOP - 1)
+
+
+# the area's streets, for Traffic
+func roads() -> Array:
+	return _block.get("roads", [])
 
 
 func _canvas(mode: int) -> Canvas:
@@ -322,6 +380,24 @@ class Canvas:
 					for d in offs:
 						for op: Array in obj["ops"]:
 							_pick_op(op, d, code)
+			MODE_DEPTH:
+				for obj: Dictionary in area.objects:
+					var key: float = obj["key"]
+					# loose pixels (roof lines, antennas) of a building take its walls' and
+					# roofs' depth, which is exact; only a thing made of nothing else draws them
+					var solid := false
+					for op: Array in obj["ops"]:
+						if op[0] == Painter.OP_POLY or op[0] == Painter.OP_WALL:
+							solid = true
+							break
+					if obj["outline"]:
+						for d in DIRS:
+							for op: Array in obj["ops"]:
+								_depth_op(op, d, key, solid, true)
+					for op: Array in obj["ops"]:
+						_depth_op(op, Vector2.ZERO, key, solid, false)
+				for op: Array in area.post:
+					_depth_op(op, Vector2.ZERO, DEPTH_FRONT, false, false)
 
 	# how: 0 palette codes (ground pass), 1 colour, 2 faded, 3 ink silhouette
 	func _op(op: Array, off: Vector2, how: int) -> void:
@@ -376,6 +452,53 @@ class Canvas:
 			Painter.OP_TEX:
 				var sp := Sprites.get_sprite(op[1])
 				draw_rect(Rect2(op[2] + sp[1] + off, sp[2]), code)
+
+	# an op in the depth pass: polygons and walls carry their ground points' depth (Painter),
+	# sprites and loose pixels use the object's middle (`key`); DEPTH_FRONT and beyond = in
+	# front of everything
+	func _depth_op(op: Array, off: Vector2, key: float, solid: bool, ink: bool) -> void:
+		match op[0]:
+			Painter.OP_POLY:
+				var pts: PackedVector2Array = op[1]
+				var uv := PackedVector2Array()
+				uv.resize(pts.size())
+				for i in pts.size():
+					uv[i] = Vector2(op[3][i] if op.size() > 3 else key, 0.0)
+				draw_polygon(Iso.moved(pts, off), PackedColorArray([Color.WHITE]), uv)
+			Painter.OP_WALL:
+				if ink and op[4]:
+					return
+				# the facade quad is padded 2 px above and below the wall itself
+				var q: PackedVector2Array = op[1]
+				var quad := PackedVector2Array([q[0] + Vector2(0, 1.5) + off,
+					q[1] + Vector2(0, 1.5) + off, q[2] - Vector2(0, 1.5) + off,
+					q[3] - Vector2(0, 1.5) + off])
+				if Geometry2D.triangulate_polygon(quad).is_empty():
+					return
+				var ends: Vector2 = op[5] if op.size() > 5 else Vector2(key, key)
+				draw_polygon(quad, PackedColorArray([Color.WHITE]), PackedVector2Array([
+					Vector2(ends.x, 0), Vector2(ends.y, 0), Vector2(ends.y, 0),
+					Vector2(ends.x, 0)]))
+			Painter.OP_RECT:
+				if solid:
+					return
+				var r: Rect2 = op[1]
+				r.position += off
+				var k := Vector2(key, 0)
+				draw_polygon(PackedVector2Array([r.position, Vector2(r.end.x, r.position.y),
+					r.end, Vector2(r.position.x, r.end.y)]), PackedColorArray([Color.WHITE]),
+					PackedVector2Array([k, k, k, k]))
+			Painter.OP_TEX:
+				var c := DEPTH_TOP if key >= DEPTH_FRONT else BlockView.depth_code(key)
+				var sp := Sprites.get_sprite(op[1])
+				var r := Rect2(op[2] + sp[1] + off, sp[2])
+				var a := Rect2(Sprites.atlas_rect(op[1]))
+				var base := Vector2(WorldShader.ATLAS_UV, 0)
+				var code := Color8(c & 255, c >> 8, 0)
+				draw_polygon(PackedVector2Array([r.position, Vector2(r.end.x, r.position.y),
+					r.end, Vector2(r.position.x, r.end.y)]), PackedColorArray([code, code, code,
+					code]), PackedVector2Array([a.position + base, Vector2(a.end.x,
+					a.position.y) + base, a.end + base, Vector2(a.position.x, a.end.y) + base]))
 
 	static func _lot_code(lot: int) -> Color:
 		return Color8((lot + 1) & 255, ((lot + 1) >> 8) & 255, 0)
