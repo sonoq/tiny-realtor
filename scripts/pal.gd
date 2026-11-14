@@ -39,6 +39,10 @@ const CAR_TINTS: Array[String] = ["RED", "CREAM", "CYAN_M", "GOLD", "SL5", "SL1"
 # more ramps made of palette colours (hi, lit, mid, dark), after the car tints so those keep their
 # numbers: gold trim, dark steel, and cyan, green and bronze glass for the top tiers
 const EXTRA: Array[String] = ["GLD", "STL", "CYN", "GRN", "BRZ"]
+# the ground is cement, not sand (Oscar: "greyish like a sidewalk"): pavements, plazas and paved
+# lots keep their PAVE names in the code but are drawn in one concrete grey with cool joints (a
+# white plaza glared); the sandy PAVE colours stay in the palette for anything else
+const CEMENT := {"PAVE_L": "CON1", "PAVE": "CON1", "PAVE_D": "SL5"}
 const _EXTRA_OF := {"GLD": ["GOLD", "GOLD", "GOLD_M", "GOLD_D"], "STL": ["SL4", "SL3", "SL2", "SL1"],
 	"CYN": ["CYAN", "CYAN_M", "CYAN_D", "CYAN_DD"], "GRN": ["TEAL0", "MINT", "GRASS_D", "GRASS_DD"],
 	"BRZ": ["GOLD_M", "OCH2", "OCH3", "TRUNK"]}
@@ -84,6 +88,11 @@ static func _ensure() -> void:
 static func i(name: String) -> int:
 	_ensure()
 	return _index[name]
+
+
+# the palette index the ground is drawn in for a ground name (PAVE* -> cement, others as named)
+static func ground(name: String) -> int:
+	return i(CEMENT.get(name, name))
 
 
 static func color(idx: int) -> Color:

@@ -276,8 +276,8 @@ int scaffold(int i, int r, int h, int k) {
 int slab(int i, int r, int h, int k, int seed) {
 	int rr = h - r + 1;
 	bool lit = k == 1;
-	if (rr == 1) return lit ? PAVE_L : PAVE_D;
-	if (rr == 2) return lit ? PAVE_D : PAVE_S;
+	if (rr == 1) return lit ? CON0 : CEM;
+	if (rr == 2) return lit ? CEM : CON2;
 	if (r == 0) return INK;
 	if (r == 1) return lit ? DIRT_D : TRUNK;
 	float st = h01(seed, i / 3, (r + (i / 3) % 2) / 3, 11);
@@ -379,7 +379,7 @@ uniform float active;
 // where this texture's pixel (0, 0) sits in the whole drawing (a lot redraw draws a piece)
 uniform vec2 offset;
 
-bool is_pave(int idx) { return idx == PAVE || idx == PAVE_D; }
+bool is_pave(int idx) { return idx == CEM || idx == CEM_J; }
 
 int at(ivec2 p) {
 	vec4 t = texelFetch(ground_tex, p, 0);
@@ -398,9 +398,9 @@ void fragment() {
 	float v = (b - a) * 0.5;
 	float hn = h01(q.x, q.y, 5, 9);
 	int was = idx;
-	if (idx == PAVE) {
+	if (idx == CEM) {
 		bool odd = mod(floor(u / 3.0) + floor(v / 3.0), 2.0) < 0.5;
-		if (odd && (mod(u, 3.0) < 0.55 || mod(v, 3.0) < 0.55)) idx = PAVE_D;
+		if (odd && (mod(u, 3.0) < 0.55 || mod(v, 3.0) < 0.55)) idx = CEM_J;
 	} else if (idx == ASPH) {
 		if (hn < 0.05) idx = ASPH_L;
 		else if (hn > 0.97) idx = ASPH_S;
@@ -413,7 +413,7 @@ void fragment() {
 	}
 	// kerbs: the pavement pixel just above the asphalt catches the light, the asphalt just below
 	// the pavement is in its shade
-	if (is_pave(was) && at(p + ivec2(0, 1)) == ASPH) idx = CREAM;
+	if (is_pave(was) && at(p + ivec2(0, 1)) == ASPH) idx = CON0;
 	if (was == ASPH && is_pave(at(p - ivec2(0, 1)))) idx = ASPH_S;
 	if (was == CYAN_D && at(p - ivec2(0, 1)) != CYAN_D) idx = CYAN_DD;
 	if (u * u + v * v > active * active) idx = pal_at(idx, 2);
@@ -428,6 +428,9 @@ static var _ground: Shader
 
 static func _header() -> String:
 	var out := "uniform sampler2D lut : filter_nearest;\n" + Pal.shader_consts()
+	# the ground's cement (Pal.CEMENT) and its slab joints
+	out += "const int CEM = %d;\nconst int CEM_J = %d;\n" % [Pal.ground("PAVE"),
+		Pal.ground("PAVE_D")]
 	out += "const int R_GLS = %d;\nconst int R_CON = %d;\n" % [Pal.ramp_of("GLS"),
 		Pal.ramp_of("CON")]
 	out += "const int R_TEAL = %d;\nconst int R_STL = %d;\nconst int R_BRZ = %d;\n" % [
