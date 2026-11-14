@@ -289,7 +289,12 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   = centroid inside the radius). Trees (gardens, parks, street trees), lamps and people inside
   the active radius (people only when `people` is on: one-off renders; the game's live
   drawing leaves them to Walkers), cars, price tags (`price_tag`, `price_of`) on the nearest signed lots. All
-  placement by stable hashes.
+  placement by stable hashes. **No trees on the road**: OSM parks often run under the
+  carriageways (the Gran Via's median); `_index_roads` buckets carriageways and rail beds as
+  capsules on a `ROAD_CELL` grid, `on_road(q, clear)`; `_scatter` keeps every trunk `TREE_CLEAR`
+  (1.8 m) off them, plants as many trees as the ground the park still shows (`_open_share`) over
+  its spacing and tries again the tries that land by a road, so a park keeps its density; street
+  trees on asphalt are dropped. All ground ops go through `Pal.ground` (PAVE* -> cement).
 - `skyline.gd` (`Skyline`) - the two top tiers as plans (data only; AreaBuilder draws them and
   lays their works out from them). **Every lot its own**: `archetype()` picks one of 13 by
   stable hash (`WEIGHT`; corner lots favour the corner landmark, small lots skip the roomy
@@ -304,7 +309,11 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   PLAZA (a tower on a plaza, pavilions; it was a pyramid roof, Oscar dropped them); an archetype the lot has no room for hands
   over to the next. `_fill` then lines the lot's free street sides with lower buildings of their
   own heights and facades (some sites left open), so a grown district keeps the mid tiers'
-  grain. **Materials**: `SCHEMES` (12) give each lot a tall / alt / mid material, trim and roof:
+  grain. `_greens` (Oscar: no sandy wasteland) then plants the paving the plan leaves open, past
+  a 2 m rim along the lot's edges and paths round every building and garden: squares on a grid
+  square to the lot (`GREEN_CELL` 9-14 m by lot, `GREEN_PATH` cement between, half to four fifths
+  of them, three kinds of lawn / bed), or for `GREEN_PARK` of the lots one park lawn per piece;
+  pieces under `GREEN_MIN` (140 m2) stay paved; all as plan `ground`. **Materials**: `SCHEMES` (12) give each lot a tall / alt / mid material, trim and roof:
   glass in GLS blue, TEAL, CYN, GRN, BRZ bronze or STL dark steel (STYLE_SKY in that ramp),
   concrete frames (STYLE_TOWER, its glass by variant), ribbon office slabs (STYLE_RIBBON), brick
   / stone / white towers with punched windows, balconies or fins (STYLE_GRID), apartments and
@@ -423,7 +432,10 @@ The office view is the mockup's renderer ported to the GPU, pixel for pixel in s
 - **One palette** (`Pal`, 74 colours from `gen_battlegrounds.py`: Battlegrounds' slate/ink/gold/
   cyan/mint/red plus the city ramps CRM OCH SAL STN TER TIL TEAL GLS CON; `Pal.EXTRA` adds
   ramps made of palette colours: GLD gold trim, STL dark steel, CYN / GRN / BRZ glass, numbered
-  after the car tints). Every pixel of the
+  after the car tints). The ground is **cement, not sand** (Oscar): `Pal.CEMENT` maps the
+  ground's PAVE names to CON1 (pavements, plazas, paved lots) with SL5 slab joints, a CON0 kerb
+  and lip (`Pal.ground`, the ground shader's `CEM` / `CEM_J`); the PAVE colours stay in the
+  palette unused by the ground. Every pixel of the
   drawing is a palette colour: nothing blends (`render_mode blend_disabled`), shadows, the dim
   outside the active radius and the faded "unpainted miniature" buildings are remap tables over
   the palette (`Pal.shadow/dim/fade`, rows of `Pal.lut()`). `render_office.gd` fails on any
@@ -593,6 +605,14 @@ none after it, or it outlives the next click. `docs/screenshots/variety/` holds 
 Valencia (`grown_before_after.png`: the grown area at x2, the twin glass clusters | every lot its
 own; `grown_far_before_after.png` the same at x1; `top_tiers_gallery.png`, `works_vs_built.png`,
 `bloque_vs_max.png`, `click_street_name.png`).
+`tools/cloud/cement_sheet.gd -- --out=/abs/dir --file=/abs/office.json [--tag=new] [--pair=old]
+[--spot=name:x:y ...]` (xvfb-run; uses only BlockView, so it runs on an older checkout too) draws
+the whole office grown and early (`whole_<tag>_*.png` + their metre -> pixel maps) and with
+`--pair` puts an older run beside it, ANTES | AHORA: `grown_before_after.png`,
+`early_before_after.png` (x2 round the office) and an x3 close-up per spot; fails on any pixel
+off the palette. `docs/screenshots/cement/` holds them for Valencia: the sand turned cement and
+planted, `jesus_maria_triangle.png` (spot -75:55), `gran_via_trees.png` (40:-100, the median's
+trees off the carriageways).
 `docs/screenshots/skyline/` keeps the earlier height-cap work (the four old layouts).
 `econ_sim.gd [-- --file=/abs/office.json] [--days=N] [--only=ideal,widget,lazy,loans,abuser,absent]`
 plays kinds of player and prints milestones and snapshots (fixture area by default); it exits 1
