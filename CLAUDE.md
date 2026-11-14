@@ -10,7 +10,8 @@ made by the game, drawn as procedural isometric pixel art made with maths.
 - Window: 600x600 logical canvas, borderless, always on top, not resizable, stretch mode
   `canvas_items`, nearest texture filter, max 60 fps.
 - Main scene `res://main.tscn` (one node running `scripts/main.gd`).
-- **Current state: first gameplay loop.** Pick a city, see its real map, place offices
+- **Current state: first gameplay loop.** Start on the world map, pick a city, see its real
+  map, place offices
   (download and bake each office's area once from OpenStreetMap), and play in the office view:
   rent per minute (offline too, capped), buy lots in the office's radius, build tiers (works with
   scaffolding and cranes), the office tab (the office is a business, not a building: level up
@@ -27,8 +28,8 @@ made by the game, drawn as procedural isometric pixel art made with maths.
 
 Full text, in Spanish, in `docs/DESIGN.md` (it wins over the older `docs/FEASIBILITY.md`).
 
-- World map (pixel art from Natural Earth coastlines, later) -> pick a city from a shipped
-  GeoNames list (no live geocoding: Nominatim forbids autocomplete) -> city map (neighbourhood
+- World map (pixel art from Natural Earth's public-domain coastlines, the first screen) -> pick
+  a city from a shipped list (later GeoNames) (no live geocoding: Nominatim forbids autocomplete) -> city map (neighbourhood
   names + main avenues from Overpass, 3-5 MB raw once per city, ~150-250 KB saved) -> click to
   place an office.
 - **You build; you never buy real buildings.** Placing an office downloads, ONCE, within its max
@@ -62,7 +63,9 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
 **Root and screens**
 - `scripts/main.gd` (`App`) - root of `main.tscn`. Owns the current `Screen`, the input (left-drag
   on the header bar moves the OS window; a press that moves more than `SLOP` is a drag, else a
-  click; Esc = back, quits from the city list) and the download jobs: `Overpass` fetch -> parse
+  click; Esc = back: office -> its city map -> the world map centred on that city
+  (`show_world(focus)`), quits from the world map; the game still opens on the last office)
+  and the download jobs: `Overpass` fetch -> parse
   and bake on a `Thread` -> save with `Store` -> open the next screen. Prints a `CITY ...` /
   `OFFICE ...` line with sizes and timings after each job.
 - `screen.gd` (`Screen`) - base for full-window screens. `ui.gd` (`Ui`) - shared drawing, a mirror
@@ -73,7 +76,27 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   with an ink rim and drop shadow; `caps()` swaps letters the fonts lack for their base letter),
   `micro` (the mockup's 3x5 font), `bar`, `coin`, and the `footer` with the OSM credit (on every
   screen) and the red DATOS DE PRUEBA tag in fixture mode. Hit targets >= `MIN_HIT`.
-- `city_pick.gd` (`CityPick`) - the shipped city list, 12 a page with < > arrows.
+- `world_map.gd` (`WorldMap`) + `world.gd` (`World`) - the first screen: the world in pixel art
+  from `assets/world/world_<level>.png` (4 pictures baked by `tools/build_world.gd`, each art
+  pixel 2x2 on screen), Miller projection cropped 84 N .. ~58 S so the map is exactly 2:1
+  (`World.unit` / `lat_at` / `lon_at`). Zoom steps x1 x2 x4 x8 x16 (`World.STEPS`; x16 shows
+  the x8 picture at 4x4, `texture_level`), drag pans (the map covers the view where it is
+  bigger, else sits centred), wheel / - + zoom; the zoom and the view's middle are static, kept
+  for the session. Markers drawn live: a cream dot per `CityDb` city, a gold pin (the office
+  view's pin sprite, `WorldMap.pin`) with the office count where the player has offices, and
+  markers closer than `HIT` (48, >= MIN_HIT) on both axes grouped (`World.clusters`, offices'
+  cities first so they anchor) into a steel disc with the city count (a pin on top when the
+  group holds offices). Hover = a chip with the name(s); names under markers where they fit
+  (offices' cities gold, others from x4). Click: a lone city opens its map (`App.open_city`);
+  a city with offices or a group of <= `LIST_MAX` (4) opens the list (a panel at the bottom,
+  5 rows a page: city rows open the map, office rows the office); a bigger group zooms in to
+  the first step that splits it. HUD: money + income/min top right, - + and the list button
+  (`LIST_BTN` -> CityPick) down the right like the office view; footer note NATURAL EARTH +
+  zoom. With no office yet a hint asks for the first one. Esc closes the list, else quits.
+  Tool hooks: `set_level`, `center_on`, `focus`, `spot_of(city)`, `list_open`, `list_rows`,
+  `show_row`, `row_rect`.
+- `city_pick.gd` (`CityPick`) - the shipped city list, 12 a page with < > arrows, reached from
+  the world map's list button; back / Esc return to the world map.
 - `city_map.gd` (`CityMap`) + `city_paint.gd` (`CityPaint`) - the city map, north up, painted once
   into a SubViewport at 12 m/px and shown at x1/x2/x4, in a slate night palette (land SL1, sea
   CYAN_DD, parks GRASS_DD, roads slate -> gold by class); labels, office markers (gold house +
@@ -489,6 +512,7 @@ godot --headless --path . --script res://tools/traffic_check.gd # 10 simulated m
 godot --headless --path . --script res://tools/walker_check.gd  # 5 simulated min of walkers
 godot --headless --path . --script res://tools/game_check.gd   # the game's rules, saves, bank
 godot --headless --path . --script res://tools/econ_sim.gd     # pacing table + bank promises
+godot --headless --path . --script res://tools/world_check.gd   # world map pictures + groups
 bash tools/cloud/screenshot.sh docs/screenshots --fixture       # the whole flow on test data
 bash tools/cloud/screenshot.sh docs/screenshots --fresh         # the whole flow on real downloads
 godot --headless --path . --script res://tools/net_check.gd     # one small real download
@@ -496,16 +520,34 @@ godot --headless --path . --script res://tools/net_check.gd     # one small real
 
 `screenshot.sh [outdir] [args]` runs `tools/cloud/capture.gd` under
 `xvfb-run -a -s "-screen 0 1280x1024x24" godot --path . --rendering-driver opengl3 --audio-driver Dummy`
-(mesa llvmpipe), because `--headless` renders nothing. The capture drives the real flow: city
-list, Barcelona map, cursor, confirm, loading, office (x2, a hovered lot, a selected lot with
+(mesa llvmpipe), because `--headless` renders nothing. The capture drives the real flow: the
+world map it opens on (`00_world_start`), the city list from its list button, Barcelona map,
+cursor, confirm, loading, office (x2, a hovered lot, a selected lot with
 its card, then Esc must close it), then plays the game in it (`NN_game_*`: the HUD, the
 office's pin pointed at, the office tab opened by clicking it (Esc closes it), a solar's buy
 card, bought + undo toast, build card, works with a crane, the office tab from the level line
 and the level-up in it, level 2, the bank, a loan sheet, the office tab at Nv 2 and its GERENTE
 page, the welcome-back card, a fully grown area x1/x2, the 200 px window), x3 close-up, x1 far, the red
-too-close cursor, offices in Tokyo and Warsaw, then the busy-server screen. Extra args: `--fixture`, `--fresh` (also re-download city maps;
+too-close cursor, offices in Tokyo and Warsaw, then the busy-server screen, the traffic
+close-up, and the world map (`NN_world_*`): a fourth office placed from it in Valencia (a big
+group clicked zooms in, then city -> office; back -> city map -> back -> the world centred on
+Valencia), the whole world with the four pins, Europe x8, a city pointed at, Spain x16, the
+list Barcelona's pin opens (its office row must open the office), Tokyo, the city list and
+back, the 200 px window. Leave Valencia out of `--spot`. Extra args: `--fixture`, `--fresh` (also re-download city maps;
 offices are always wiped first), `--spot=city:lat:lon` (repeatable, replaces the places),
 `--raw-cache=DIR`. Under Xvfb a `WARNING: Could not set V-Sync mode` line is normal.
+
+World map: `tools/fetch_natural_earth.sh /abs/dir` downloads Natural Earth's 1:50m land,
+lakes and country borders (GeoJSON, ~3.3 MB, public domain, `docs/NATURAL_EARTH.md`) outside
+the repo; `godot --headless --path . --script res://tools/build_world.gd -- --src=/abs/dir`
+bakes `assets/world/world_0..3.png` (300x150 .. 2400x1200 art px, ~265 KB together, palette
+colours only: land SL2 dithered SL1 with an SL3 coast rim, sea CYAN_DD with a TEAL3 shore ring,
+dotted SL1 borders from level 1, dotted TEAL3 30-degree graticule on open sea; pixel-centre
+scanline fill, even-odd per polygon, one-pixel lakes dropped; deterministic), then `--import`.
+Only rerun it to change the look. `world_check.gd` (headless) checks the pictures' sizes and
+palette, that every city lands on land, the projection round trip, and at every step that each
+city is in one group and no two hit boxes overlap. `docs/screenshots/worldmap/` holds the
+world map's shots on real data.
 
 Other tools: `bake_check.gd -- --raw=/abs/answer.json --lat= --lon= [--city]` bakes a saved raw
 Overpass answer (checks: polygons, every lot faces a street, 20..600 lots per 500 m area, an
