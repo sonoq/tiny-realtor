@@ -1,25 +1,29 @@
 extends SceneTree
 
-# Runs an office's traffic headless for MINUTES simulated minutes (the window fixed on the office
-# at x2, as the game opens it) and checks it: every car stays on a street (within its width of a
-# drivable road line), no two cars ever stand on top of each other, the traffic keeps flowing (no
-# car stuck for ever, cars all the way through) and a seed always plays the same (two runs with
-# one seed agree to the last bit, another seed differs). By default it uses the made-up
-# fixture areas (no network); --file adds saved office areas:
+# Runs an office's traffic headless, SEEDS times with different seeds for MINUTES simulated
+# minutes each (the window fixed on the office at x2, as the game opens it) and checks it: every
+# car stays on a street (within its width of a drivable road line), no two cars ever stand on
+# top of each other, the traffic keeps flowing (no car waits longer than WAIT_MAX anywhere, cars
+# all the way through) and a seed always plays the same (two runs with one seed agree to the
+# last bit, another seed differs). By default it drives the made-up fixture areas and the real
+# Valencia sample (CheckAreas, no network); --file adds saved office areas:
 #
 #   godot --headless --path . --script res://tools/traffic_check.gd
 #   godot --headless --path . --script res://tools/traffic_check.gd -- --file=/abs/office.json \
-#       [--minutes=10]
+#       [--minutes=6] [--seeds=5]
 #
 # Prints PASS and exits 0, or prints what failed and exits 1.
 
-const MINUTES := 10.0
+const CheckAreas := preload("res://tools/check_areas.gd")
+
+const MINUTES := 6.0
+const SEEDS := 5
 # metres a car may stray past a street's edge (its body is inside, its middle is checked)
 const ROAD_TOL := 0.6
 # two cars' middles closer than this stand on each other (a car is 2 m wide)
 const MIN_SEP := 2.0
-# no car may stand still longer than this (s): the traffic would be jammed for good
-const STUCK_MAX := 120.0
+# no car may stand still longer than this (s): a junction that starves a car is jammed
+const WAIT_MAX := 60.0
 const CHECK_EVERY := 5
 const CELL := 20.0
 
@@ -29,28 +33,19 @@ var _bad := 0
 func _init() -> void:
 	var files: Array[String] = []
 	var minutes := MINUTES
+	var seeds := SEEDS
 	for arg: String in OS.get_cmdline_user_args():
 		if arg.begins_with("--file="):
 			files.append(arg.substr(7))
 		elif arg.begins_with("--minutes="):
 			minutes = arg.substr(10).to_float()
-	var areas: Array = []
-	for at: Vector2 in [Vector2(41.3925, 2.1640), Vector2(35.6595, 139.7005),
-			Vector2(52.2297, 21.0122)]:
-		var block := BlockBaker.bake(Fixture.area(at.x, at.y, 500.0), at.x, at.y, 500.0)
-		block["office"] = {"id": "fixture_%d" % areas.size(),
-			"city": ["barcelona", "tokyo", "warszawa"][areas.size()]}
-		areas.append([block, "fixture %s" % block["office"]["city"]])
-	for f in files:
-		var block: Variant = Store.read_json(f)
-		if not block is Dictionary:
-			_fail("cannot read " + f)
+		elif arg.begins_with("--seeds="):
+			seeds = maxi(2, arg.substr(8).to_int())
+	for a: Array in CheckAreas.load_all(files):
+		if a[0] == null:
+			_fail("cannot read " + a[1])
 			continue
-		if int(block.get("format_version", 0)) == 2:
-			block = BlockBaker.upgrade(block)
-		areas.append([block, f.get_file()])
-	for a: Array in areas:
-		_check(a[0], a[1], minutes)
+		_check(a[0], a[1], minutes, seeds)
 	if _bad == 0:
 		print("PASS traffic_check")
 		quit(0)
@@ -59,10 +54,33 @@ func _init() -> void:
 		quit(1)
 
 
-func _check(block: Dictionary, label: String, minutes: float) -> void:
-	var t0 := Time.get_ticks_msec()
+func _check(block: Dictionary, label: String, minutes: float, seeds: int) -> void:
 	var grid := _road_grid(block)
-	var seed: String = block.get("office", {}).get("id", "x")
+	var id: String = block.get("office", {}).get("id", "x")
+	var mark := roundi(60.0 / Traffic.TICK)
+	var early := ""
+	var waits := PackedStringArray()
+	for n in seeds:
+		var seed := id if n == 0 else "%s#%d" % [id, n]
+		var state := _run(block, grid, "%s [%s]" % [label, seed], seed, minutes, waits)
+		if n == 0:
+			early = state
+		elif state == early and not state.begins_with("0|"):
+			_fail("%s: seed %s played the same as %s" % [label, seed, id])
+	print("%s: longest wait per seed %s s" % [label, " ".join(waits)])
+	# the same seed plays the same
+	var again := _traffic(block, id)
+	for k in mark:
+		again.step()
+	if _state(again) != early:
+		_fail("%s: the same seed played differently" % label)
+	again.free()
+
+
+# one seed's run; returns the state after a minute (for the seed comparisons)
+func _run(block: Dictionary, grid: Dictionary, label: String, seed: String, minutes: float,
+		waits: PackedStringArray) -> String:
+	var t0 := Time.get_ticks_msec()
 	var traffic := _traffic(block, seed)
 	var ticks := roundi(minutes * 60.0 / Traffic.TICK)
 	var mark := roundi(60.0 / Traffic.TICK)
@@ -78,7 +96,7 @@ func _check(block: Dictionary, label: String, minutes: float) -> void:
 		usec += traffic.tick_usec
 		for i in traffic.count:
 			moved += traffic.v[i] * Traffic.TICK
-			if traffic.stuck[i] > STUCK_MAX and worst_stuck <= STUCK_MAX:
+			if traffic.stuck[i] > WAIT_MAX and worst_stuck <= WAIT_MAX:
 				print("  %s: car %d stuck at %s (tick %d): %s" % [label, i, traffic.pos[i], k,
 					_where(traffic, i)])
 			worst_stuck = maxf(worst_stuck, traffic.stuck[i])
@@ -91,7 +109,8 @@ func _check(block: Dictionary, label: String, minutes: float) -> void:
 			var p := traffic.pos[i]
 			if not p.is_finite():
 				_fail("%s: car %d has no position at tick %d" % [label, i, k])
-				return
+				traffic.free()
+				return early
 			var lane := traffic.path[i]
 			if not _on_road(grid, p):
 				off_road += 1
@@ -104,7 +123,7 @@ func _check(block: Dictionary, label: String, minutes: float) -> void:
 					if stacked <= 3:
 						print("  %s: cars %d and %d on top of each other at %s (tick %d): %s, %s"
 							% [label, i, j, p, k, _where(traffic, i), _where(traffic, j)])
-	var final := _state(traffic)
+	waits.append("%.0f" % worst_stuck)
 	print("%s: %d lanes, %d paths, %d cars wanted, %d..%d on the streets, %d came, %d went, "
 		% [label, traffic.net.lane_count, traffic.net.path_count(), traffic.target, fewest,
 		traffic.count, traffic.spawned, traffic.recycled]
@@ -116,27 +135,14 @@ func _check(block: Dictionary, label: String, minutes: float) -> void:
 		_fail("%s: %d times a car was off the street" % [label, off_road])
 	if stacked > 0:
 		_fail("%s: %d times two cars stood on each other" % [label, stacked])
-	if worst_stuck > STUCK_MAX:
+	if worst_stuck > WAIT_MAX:
 		_fail("%s: a car stood still for %.0f s" % [label, worst_stuck])
 	if traffic.target > 0 and moved < traffic.target * minutes * 60.0:
 		_fail("%s: the traffic hardly moved (%.1f km)" % [label, moved / 1000.0])
-	var wanted := traffic.target
+	if early == "":
+		_fail("%s: no state after a minute" % label)
 	traffic.free()
-	# the same seed plays the same, another seed does not
-	var again := _traffic(block, seed)
-	for k in mark:
-		again.step()
-	if _state(again) != early:
-		_fail("%s: the same seed played differently" % label)
-	again.free()
-	var other := _traffic(block, seed + "!")
-	for k in mark:
-		other.step()
-	if wanted > 0 and _state(other) == early:
-		_fail("%s: another seed played the same" % label)
-	other.free()
-	if final == "":
-		_fail("%s: no final state" % label)
+	return early
 
 
 func _traffic(block: Dictionary, seed: String) -> Traffic:

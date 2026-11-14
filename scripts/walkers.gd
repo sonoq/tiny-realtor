@@ -39,6 +39,11 @@ const PATIENCE := 30.0
 const STUCK_TURN := 4.0
 # a car that has waited this long at its junction gets to go first (s)
 const CAR_TURN := 6.0
+# and for this long after it got its turn (s) the cars waiting behind it go first too, so a
+# queue of cars gets through instead of each car waiting its CAR_TURN again
+const CAR_PHASE := 8.0
+# how close to the crossing (m) a car waits to count for that
+const LOOK_PHASE := 20.0
 # the braking a walker counts on from a car coming (m/s2), gentler than Traffic.BRAKE
 const CAR_SLOW := 1.5
 # a granted car this close along its way (m) crosses first
@@ -99,6 +104,8 @@ var _view := Rect2()
 var _centre := Vector2.ZERO
 var _reach := 300.0
 var _clock := 0
+# per crossing, the tick a car last got its turn there (CAR_TURN)
+var _car_turn := PackedInt32Array()
 var _near := PackedInt32Array()
 var _near_total := 0.0
 var _cells := 0
@@ -454,7 +461,7 @@ func _release(i: int) -> void:
 
 # whether crossing c may be stepped onto now: no car on it, none coming that could not stop
 # gently, none that has its junction and will drive through it, none on its way through it that
-# has waited long for its junction
+# has waited long for its junction (nor, for CAR_PHASE after that, any waiting behind it)
 func _clear(c: int) -> bool:
 	if traffic == null or net.c_free[c] == 1:
 		return true
@@ -463,6 +470,10 @@ func _clear(c: int) -> bool:
 	var along := net.c_along[c]
 	var across := net.c_across[c]
 	var reach := net.c_half[c] + 1.5
+	if _car_turn.size() != net.c_mid.size():
+		_car_turn.resize(net.c_mid.size())
+		_car_turn.fill(-1000000)
+	var phase := _clock - _car_turn[c] < roundi(CAR_PHASE / Traffic.TICK)
 	for j in tr.count:
 		var d := tr.pos[j] - m
 		if d.length_squared() > 4900.0:
@@ -482,6 +493,12 @@ func _clear(c: int) -> bool:
 		if v > 0.3 and dist < v * v / (2.0 * CAR_SLOW) + 4.0 + v * 0.6:
 			return false
 		if tr.wait[j] > CAR_TURN and dist < GRANTED_NEAR:
+			# the cars' turn starts (it runs CAR_PHASE, not longer for more cars)
+			if not phase:
+				_car_turn[c] = _clock
+			return false
+		# meanwhile the cars waiting at the junction just before go first too
+		if phase and tr.wait[j] > 0.0 and tr.v[j] < 0.5 and dist < LOOK_PHASE:
 			return false
 	return true
 
