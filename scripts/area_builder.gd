@@ -64,6 +64,8 @@ var lot_shadows: Array = []
 var tags := true
 # people standing on the pavements; the game has them walking instead (Walkers)
 var people := true
+# the lot being laid out still owes its one owner's flag
+var _flag_left := false
 # where income pops rise from: over the roofs of what the player owns
 var pops: Array[Vector2] = []
 # one entry per lot (index = the file's plots[] index): "data" (the plot), "poly" (ground
@@ -470,6 +472,13 @@ func _shadow(foot: PackedVector2Array, h: float) -> void:
 
 # --- buildings -----------------------------------------------------------------------------------
 
+# an owned lot flies one flag (on the first building that asks), not one per building
+func _take_flag() -> bool:
+	var f := _flag_left
+	_flag_left = false
+	return f
+
+
 # a lot's development: ground, then its buildings on sites along its streets
 func _develop(plot: Dictionary, poly: PackedVector2Array) -> void:
 	var id: String = plot["id"]
@@ -477,6 +486,7 @@ func _develop(plot: Dictionary, poly: PackedVector2Array) -> void:
 	var zone: String = plot["zone"]
 	var owned: bool = plot.get("owned", false)
 	var levels := int(plot.get("levels", 4))
+	_flag_left = owned
 	if plot.has("works"):
 		_works(plot, poly, int(plot["works"]))
 		return
@@ -636,7 +646,7 @@ func _apartments(plot: Dictionary, poly: PackedVector2Array,
 		built.append(site)
 		var lv := levels + int(Iso.h01(sid + "lv") * 3.0) - 1
 		var hz := _apt_top(lv)
-		var roof := Pal.ramp_of("TEAL" if owned else "TER")
+		var roof := Pal.ramp_of("TER")
 		_object(sid, site)
 		_pt.prism(site, 0.0, hz, WorldShader.STYLE_APT, _facade(sid), roof)
 		_roof_props(sid, site, hz, owned, false)
@@ -800,7 +810,7 @@ func _shed(id: String, poly: PackedVector2Array, owned: bool) -> void:
 	var hz := 13.0
 	_object(id, base)
 	_pt.prism(base, 0.0, hz, WorldShader.STYLE_SHED, Pal.ramp_of("CON"),
-		Pal.ramp_of("TEAL" if owned else "CON"))
+		Pal.ramp_of("CON"))
 	_close(hz)
 
 
@@ -819,7 +829,7 @@ func _house(id: String, poly: PackedVector2Array, tier: int, facade: int, owned:
 		rect = moved
 	var floors := 2 if tier == 1 else 3
 	var hz := floors * 5.0 + 1.0
-	var rr := Pal.ramp_of("TEAL" if owned else "TIL")
+	var rr := Pal.ramp_of("TIL")
 	_object(id, rect)
 	var ridge := _pt.pitched(rect, 0.0, hz, facade, rr, 6.0 if tier == 1 else 8.0,
 		0.0 if tier == 1 else 0.28, WorldShader.STYLE_HOUSE)
@@ -829,7 +839,7 @@ func _house(id: String, poly: PackedVector2Array, tier: int, facade: int, owned:
 	var ch := r1.lerp(r2, 0.7) + Vector2(0.8, 0.8)
 	var stn := Pal.ramp_of("STN")
 	_pt.prism(Iso.square(ch, 0.7), zt - 3.0, zt + 2.0, WorldShader.STYLE_PLAIN, stn, stn, false)
-	if owned:
+	if owned and _take_flag():
 		_pt.tex("flag:7:cyan", iso.pv(r1, zt))
 	_close(hz + 4.0, rect)
 	if tier == 2:
@@ -975,7 +985,7 @@ func _piece(id: String, p: Dictionary, owned: bool) -> void:
 		for k in spire:
 			_pt.dot(tip + Vector2(0, -k), Pal.i("SL5") if k % 3 else Pal.i("SL3"))
 		_pt.dot(tip + Vector2(0, -spire), Pal.i("RED"))
-	if owned and p.get("flag", false):
+	if owned and p.get("flag", false) and _take_flag():
 		var far := foot[0]
 		for q in foot:
 			if q.x + q.y < far.x + far.y:
@@ -1080,7 +1090,7 @@ func _roof_props(id: String, g: PackedVector2Array, hz: float, owned: bool, mode
 		else:
 			_pt.prism(bx, hz, hz + 3.0, WorldShader.STYLE_PLAIN, Pal.ramp_of("STN"),
 				Pal.ramp_of("STN"), false)
-	if owned:
+	if owned and _take_flag():
 		var far := gi[0]
 		for q in gi:
 			if Iso.depth(q) < Iso.depth(far):

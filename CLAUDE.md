@@ -282,7 +282,7 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   house in its head; an object of no lot, so it sorts, outlines and goes through the depth pass
   like a lamp but never into the pick image) at `OfficeMark.at`; street trees, lamps, people and
   garden trees keep `MARK_CLEAR` from it. The lot the office was placed on is an ordinary lot.
-  Owned = teal roofs (tiers 1-3; tall lots keep their own roofs, a sea of teal read as blue lids) + cyan flags; an owned solar flies a flag instead of the sale sign.
+  Owned = one cyan flag per lot (`_take_flag`; roofs keep their own colours: teal ones read as a sea of blue lids); an owned solar flies a flag instead of the sale sign.
   Each lot's ground ops (`lot_ground`), shadows (`lot_shadows`) and objects are kept apart so
   `rebuild_lot` can lay it out again; `lots[i].roof` is where its pops rise; `tags` off leaves the
   price tags to the game. Every object records its `lot`; buildings fade per lot (`lots[i].active`
@@ -301,7 +301,7 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   on the street, a taller one behind it, AC, signs, helipad), HOTEL (a pool deck wing and a
   balcony tower), ESQUINA (a chamfered landmark on the street corner, wings along both streets),
   BLOQUE EN L (a stepped slab round the streets, its corner rising, pool and garden inside),
-  PIRAMIDE (a tower with a pyramid roof, pavilions); an archetype the lot has no room for hands
+  PLAZA (a tower on a plaza, pavilions; it was a pyramid roof, Oscar dropped them); an archetype the lot has no room for hands
   over to the next. `_fill` then lines the lot's free street sides with lower buildings of their
   own heights and facades (some sites left open), so a grown district keeps the mid tiers'
   grain. **Materials**: `SCHEMES` (12) give each lot a tall / alt / mid material, trim and roof:
@@ -312,7 +312,7 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
   `C_PAD`, `C_ANTENNA` or `C_SPIRE`; `_props` puts AC units, water tanks, huts, solar panels, a
   rooftop sign or a roof garden on flat roofs. **Height cap** so a grown area reads in the
   widget: torres' tallest `TOWER_Z` 30-42 px (+ up to a 5 px setback), rascacielos' tallest
-  exactly `SKY_Z` 52-60 px (`sky_z`) + a crown (gold bands, spire, helipad, pyramid or mast; a
+  exactly `SKY_Z` 52-60 px (`sky_z`) + a crown (gold bands, spire, helipad or mast, never a pyramid; a
   7 px spire at most); mid-rise `MID_Z`, pavilions `LOW_Z`; `top()` is what
   `AreaBuilder.top_of` and the live headroom use. `AreaBuilder.skyline` (default `MIX`) lets
   tools force one archetype.

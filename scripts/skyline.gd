@@ -35,7 +35,7 @@ enum { CLUSTER, BRIDGES, MEGA, RING, PERIMETER, ZIGGURAT, SLIM_WIDE, DECO, OFFIC
 const MIX := -1
 const NAMES: Array[String] = ["RACIMO", "PUENTES", "MEGABLOQUE", "ANILLO", "MANZANA",
 	"ZIGURAT", "TORRE Y BLOQUE", "ART DECO", "OFICINAS", "HOTEL", "ESQUINA", "BLOQUE EN L",
-	"PIRAMIDE"]
+	"PLAZA"]
 # how often each archetype comes up: the ones that keep lower buildings round the tall one more
 const WEIGHT: Array[float] = [1.0, 1.0, 0.8, 0.8, 2.0, 1.0, 1.6, 1.2, 1.4, 0.9, 1.6, 1.2, 1.0]
 
@@ -364,9 +364,9 @@ static func _crown(lot: Dictionary, m: Dictionary, key: String, tallest: bool) -
 	var r := Iso.h01(key + "crown")
 	if lot["tier"] == 5 and tallest:
 		if int(m["k"]) == M_GLASS:
-			return [C_GOLD, C_SPIRE, C_PAD, C_STEPS, C_PYRAMID, C_ANTENNA][int(r * 6.0)]
-		return [C_SPIRE, C_STEPS, C_PAD, C_PYRAMID, C_ANTENNA][int(r * 5.0)]
-	return [C_FLAT, C_FLAT, C_SETBACK, C_ANTENNA, C_STEPS, C_PAD, C_PYRAMID][int(r * 7.0)]
+			return [C_GOLD, C_SPIRE, C_PAD, C_STEPS, C_ANTENNA][int(r * 5.0)]
+		return [C_SPIRE, C_STEPS, C_PAD, C_ANTENNA][int(r * 4.0)]
+	return [C_FLAT, C_FLAT, C_SETBACK, C_ANTENNA, C_STEPS, C_PAD][int(r * 6.0)]
 
 
 # --- roof props ----------------------------------------------------------------------------------
@@ -1266,7 +1266,7 @@ static func _lslab(out: Dictionary, lot: Dictionary) -> void:
 	out["trees"] = 70.0
 
 
-# a tower with a pyramid roof on a plaza, a low pavilion or two beside it
+# a tower on a plaza, a low pavilion or two beside it (once a pyramid-roofed tower)
 static func _pyramid(out: Dictionary, lot: Dictionary) -> void:
 	var poly: PackedVector2Array = lot["poly"]
 	var id: String = lot["id"]
@@ -1280,7 +1280,9 @@ static func _pyramid(out: Dictionary, lot: Dictionary) -> void:
 	var foot := Iso.square(at[0], half)
 	var m: Dictionary = s["tall"]
 	var key := id + "_pyr"
-	_alone(out, foot, _tower(foot, 0.0, _peak(lot), m, C_PYRAMID, lot, key, true))
+	# Oscar did not like the gold pyramid roofs: the tower wears an ordinary crown
+	_alone(out, foot, _tower(foot, 0.0, _peak(lot), m, _crown(lot, m, key, true), lot, key,
+		true))
 	_pavilions(out, lot, [foot], 2)
 	out["trees"] = 85.0
 	out["base"] = "PAVE_L" if Iso.h01(id + "yb") < 0.5 else "PAVE"
