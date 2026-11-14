@@ -241,7 +241,7 @@ calls (`press`/`click`/`drag`/`hover`/`wheel`/`back`) in canvas coordinates.
 
 **Traffic** (moving cars over the office drawing; `docs/screenshots/traffic/`)
 - `road_net.gd` (`RoadNet`) - the area's roads (pedestrian streets aside) as lanes: lines split
-  where they cross or touch (`_split_crossings`), junctions under `MERGE` (8 m) apart or whose
+  where they cross or touch (`split_crossings`), junctions under `MERGE` (8 m) apart or whose
   boxes overlap merged;
   a two-way edge gets one lane each way (two on 18 m+ avenues), a one-way edge (`oneway`) one
   to three lanes its way, right-hand (left-hand for `Traffic.LEFT_HAND` countries); each lane

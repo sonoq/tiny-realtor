@@ -98,7 +98,7 @@ func build(roads: Array, left_hand: bool, radius: float) -> void:
 					if not _roads.has(key):
 						_roads[key] = []
 					_roads[key].append([line[i - 1], line[i], half])
-	_split_crossings(lines)
+	split_crossings(lines)
 	# a point shared by two lines (or an end) is a node
 	var seen := {}
 	for line in lines:
@@ -419,7 +419,7 @@ func _merge_close() -> void:
 
 # streets that cross (or end on another) without sharing a point get one there, so every
 # crossing is a junction
-static func _split_crossings(lines: Array[PackedVector2Array]) -> void:
+static func split_crossings(lines: Array[PackedVector2Array]) -> void:
 	var cell := 40.0
 	var grid := {}
 	for li in lines.size():
