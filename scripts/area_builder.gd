@@ -48,6 +48,11 @@ const SHED_FRONT := Vector2(18, 30)
 const GARDEN_TREE := 70.0
 # street trees, lamps and people keep this far (m) from the office's pin
 const MARK_CLEAR := 4.5
+# a tree's trunk keeps this far (m) from asphalt and rail beds, about its canopy's radius, so a
+# park polygon that runs under the carriageways (a median) never plants trees on the road
+const TREE_CLEAR := 1.8
+# the grid (m) the road index buckets carriageways in
+const ROAD_CELL := 16.0
 
 var iso: Iso
 var radius := 0.0
@@ -87,6 +92,8 @@ var keep_clear: Array[Rect2] = []
 # the office's marker: its ground point (metres) and the pin's box in the drawing
 var mark := Vector2.ZERO
 var mark_box := Rect2()
+# carriageways and rail beds as capsules [a, b, half width], bucketed by ROAD_CELL
+var _roads := {}
 # the torres / rascacielos archetype: every lot its own (Skyline.MIX); tools may force one
 static var skyline: int = Skyline.MIX
 
@@ -102,6 +109,7 @@ func _init(camera: Iso, block: Dictionary, active_radius: float) -> void:
 # --- everything, in order ------------------------------------------------------------------------
 
 func build() -> void:
+	_index_roads()
 	_find_junctions()
 	_ground_base()
 	_ground_marks()
@@ -1145,7 +1153,8 @@ func _trees() -> void:
 	for b: Dictionary in _block["blocks"]:
 		var poly := Iso.clean(_pts(b["poly"]))
 		_along(poly, 1.6, STREET_TREE_EVERY, 3.0, func(q: Vector2, k: int) -> void:
-			_tree(q, "st%s_%d" % [b["id"], k], false))
+			if not on_road(q, 0.5):
+				_tree(q, "st%s_%d" % [b["id"], k], false))
 
 
 # trees scattered at random inside a polygon, about one per `every` square metres, never two
@@ -1164,16 +1173,24 @@ func _scatter(poly: PackedVector2Array, seed: String, every: float,
 			keep_out.append(grown)
 			boxes.append(Geo.bounds(grown))
 	var box := Geo.bounds(inner)
-	var want := int(Iso.area(inner) / every)
+	# as many trees as the ground left showing (asphalt drawn over a park takes its share away)
+	# holds, all of them clear of the asphalt, so a park keeps its density
+	var want := int(Iso.area(inner) * _open_share(inner, box, seed) / every)
 	var gap := sqrt(every) * 0.55
 	var placed := PackedVector2Array()
-	for k in want * 3:
-		if placed.size() >= want:
-			break
+	# a try that lands by the road is tried again (up to 4x the tries), so the park's trees
+	# move off the road rather than thin out; ground away from roads draws as it always did
+	var tries := want * 3
+	var k := -1
+	while placed.size() < want and k < mini(tries, want * 12) - 1:
+		k += 1
 		var q := box.position + box.size * Vector2(Iso.h01(seed + "a%d" % k),
 			Iso.h01(seed + "b%d" % k))
 		if q.length() > radius - 3.0 or not Geometry2D.is_point_in_polygon(q, inner) \
 				or q.distance_to(mark) < MARK_CLEAR:
+			continue
+		if on_road(q, TREE_CLEAR):
+			tries += 1
 			continue
 		var clear := true
 		for j in keep_out.size():
@@ -1190,6 +1207,56 @@ func _scatter(poly: PackedVector2Array, seed: String, every: float,
 			continue
 		placed.append(q)
 		_tree(q, seed + str(k), Iso.h01(seed + "big%d" % k) < 0.3)
+
+
+# the share of a polygon not under asphalt or a rail bed, from up to 96 hashed sample points
+func _open_share(poly: PackedVector2Array, box: Rect2, seed: String) -> float:
+	var inside := 0
+	var open := 0
+	for k in 96:
+		var q := box.position + box.size * Vector2(Iso.h01(seed + "sa%d" % k),
+			Iso.h01(seed + "sb%d" % k))
+		if not Geometry2D.is_point_in_polygon(q, poly):
+			continue
+		inside += 1
+		if not on_road(q, 0.0):
+			open += 1
+	return 1.0 if inside == 0 else float(open) / inside
+
+
+func _index_roads() -> void:
+	_roads.clear()
+	for road: Dictionary in _block["roads"]:
+		if road["kind"] != "pedestrian":
+			_index_line(_pts(road["line"]), float(road["width"]) * 0.5)
+	for rail: Dictionary in _block["rails"]:
+		if rail["kind"] != "tram":
+			_index_line(_pts(rail["line"]), 2.6)
+
+
+func _index_line(line: PackedVector2Array, half: float) -> void:
+	for i in range(1, line.size()):
+		var a := line[i - 1]
+		var b := line[i]
+		var box := Rect2(a, Vector2.ZERO).expand(b).grow(half + TREE_CLEAR + 0.5)
+		for cx in range(floori(box.position.x / ROAD_CELL), floori(box.end.x / ROAD_CELL) + 1):
+			for cy in range(floori(box.position.y / ROAD_CELL), floori(box.end.y / ROAD_CELL) + 1):
+				var key := Vector2i(cx, cy)
+				if not _roads.has(key):
+					_roads[key] = []
+				_roads[key].append([a, b, half])
+
+
+# whether a ground point lies on asphalt or a rail bed, or within `clear` m of one
+func on_road(q: Vector2, clear: float) -> bool:
+	var cell: Variant = _roads.get(Vector2i(floori(q.x / ROAD_CELL), floori(q.y / ROAD_CELL)))
+	if cell == null:
+		return false
+	for s: Array in cell:
+		var c := Geometry2D.get_closest_point_to_segment(q, s[0], s[1])
+		if c.distance_squared_to(q) < (s[2] + clear) * (s[2] + clear):
+			return true
+	return false
 
 
 # calls fn at points every `every` m around a polygon grown by `out` m, away from its corners
