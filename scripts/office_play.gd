@@ -3,20 +3,21 @@ extends Node2D
 
 # The game over an office's map (docs/GAMEPLAY.md): OfficeView shows and pans the drawing and
 # points at lots; this layer, drawn above it, is everything with money in it. Top right the
-# cash and the rent per minute (and the debt), the bank and manager buttons under the zoom; on
+# cash and the rent per minute (and the debt), the bank and office buttons under the zoom; on
 # the map price tags over lots for sale, gold arrows over lots that can be built on now, a bar
 # over each works and "+$" pops over the roofs while the pointer is over the window; at the
 # bottom the next move and the office level bar. The selected lot's card buys, builds and
-# borrows; the office's own card levels the office up and switches its builder on. A purchase
-# or works can be undone for a few seconds. The bank and the manager are full-window panels
-# (BankPanel, TeamPanel); coming back after a while shows what was earned away.
+# borrows. A purchase or works can be undone for a few seconds. The bank and the office tab
+# (level, builder, manager: the office has no building of its own) are full-window panels
+# (BankPanel, OfficePanel), the tab also opened by the level line and the office's pin on the
+# map; coming back after a while shows what was earned away.
 # OfficeView hands it every input first (press / click / hover / back); true = taken.
 
 const MONEY_AT := Vector2(588, 40)
 const ZOOM_IN := Rect2(536, 88, 52, 52)
 const ZOOM_OUT := Rect2(536, 146, 52, 52)
 const BANK_BTN := Rect2(536, 212, 52, 52)
-const TEAM_BTN := Rect2(536, 270, 52, 52)
+const OFFICE_BTN := Rect2(536, 270, 52, 52)
 const NEXT := Rect2(12, 484, 576, 46)
 const LEVEL_BAR := Rect2(12, 558, 576, 16)
 const LEVEL_ZONE := Rect2(0, 534, 600, 44)
@@ -132,7 +133,7 @@ func press(at: Vector2) -> bool:
 	if blocks_map():
 		return true
 	return ZOOM_IN.has_point(at) or ZOOM_OUT.has_point(at) or _buttons_shown() \
-		and (BANK_BTN.has_point(at) or TEAM_BTN.has_point(at)) \
+		and (BANK_BTN.has_point(at) or OFFICE_BTN.has_point(at)) \
 		or _undo_visible() and UNDO_BTN.has_point(at)
 
 
@@ -142,7 +143,7 @@ func over_ui(at: Vector2) -> bool:
 		or (_clock < _toast_until or _undo_visible()) and TOAST.has_point(at)
 
 
-# the bank and manager buttons hide under an open card
+# the bank and office buttons hide under an open card
 func _buttons_shown() -> bool:
 	return not view.is_card_open()
 
@@ -166,13 +167,18 @@ func click(at: Vector2) -> bool:
 			_away_since = -1.0
 		queue_redraw()
 		return true
-	if _panel != null and double and _panel is TeamPanel:
+	# the office tab spends (level up, hire): not on the click that focused the window, nor on
+	# the second tap of a double tap
+	if _panel is OfficePanel and (double or now_ms - App.focus_ms < FOCUS_GRACE_MS):
 		return true
 	if _panel != null:
 		view.sync()
+		var lv := game.level(id)
 		_panel.call("click", at)
 		if _panel.call("wants_close"):
 			_panel = null
+		if game.level(id) > lv:
+			_leveled()
 		_best_t = -1.0
 		queue_redraw()
 		return true
@@ -188,8 +194,8 @@ func click(at: Vector2) -> bool:
 	if _buttons_shown() and BANK_BTN.has_point(at):
 		open_panel("bank")
 		return true
-	if _buttons_shown() and TEAM_BTN.has_point(at):
-		open_panel("team")
+	if _buttons_shown() and OFFICE_BTN.has_point(at):
+		open_panel("office")
 		return true
 	if view.is_card_open() and CARD.has_point(at):
 		var fresh := now_ms - App.focus_ms < FOCUS_GRACE_MS
@@ -210,7 +216,10 @@ func click(at: Vector2) -> bool:
 		_follow_best()
 		return true
 	if LEVEL_ZONE.has_point(at):
-		_select_office()
+		open_panel("office")
+		return true
+	if not view.is_card_open() and view.on_mark(at):
+		open_panel("office")
 		return true
 	return false
 
@@ -227,13 +236,15 @@ func back() -> bool:
 	return false
 
 
+# "bank", "office", or "team" (the office tab on its manager page)
 func open_panel(kind: String) -> void:
 	# an undo would also take back what is done in a panel: it ends here
 	_undo = {}
 	if kind == "bank":
 		_panel = BankPanel.new(game)
 	else:
-		_panel = TeamPanel.new(game, id)
+		_panel = OfficePanel.new(game, id, OfficePanel.PAGE_TEAM if kind == "team"
+			else OfficePanel.PAGE_OFFICE)
 	_panel.set("hot", hot)
 	queue_redraw()
 
@@ -241,8 +252,8 @@ func open_panel(kind: String) -> void:
 func panel_kind() -> String:
 	if _panel is BankPanel:
 		return "bank"
-	if _panel is TeamPanel:
-		return "team"
+	if _panel is OfficePanel:
+		return "office"
 	return ""
 
 
@@ -252,52 +263,17 @@ func _lot_id(i: int) -> String:
 	return infos[i]["id"]
 
 
-func _is_office(i: int) -> bool:
-	return _lot_id(i) == block.get("office_plot", "")
-
-
-func _select_office() -> void:
-	var i: int = index.get(block.get("office_plot", ""), -1)
-	if i >= 0:
-		view.focus_lot(i)
-		view.select(i)
-	queue_redraw()
-
-
 # what the card's buttons do: [label, enabled, callable, note] for the main and side button
 func _card_buttons(i: int) -> Array:
 	var lid := _lot_id(i)
 	var info := infos[i]
 	var none := ["", false, Callable(), ""]
-	if _is_office(i):
-		var lv := game.level(id)
-		var main := none
-		if lv < Economy.max_level():
-			var c := Economy.level_cost(lv)
-			var why := game.can_level_up(id)
-			main = ["SUBIR A NV %d · %s" % [lv + 1, Economy.money(c)], why == "",
-				_level_up, _short(why, c)]
-		else:
-			main = ["NIVEL MÁXIMO", false, Callable(), ""]
-		var side := none
-		if game.auto_open(id):
-			side = ["OBRAS SOLAS: " + ("SÍ" if game.auto_on(id) else "NO"), true,
-				func() -> void:
-					_undo = {}
-					game.set_auto(id, not game.auto_on(id))
-					game.save()
-					if game.auto_on(id):
-						say("Tu oficina construirá sola")
-					_after_change(-1), ""]
-		else:
-			side = ["OBRAS SOLAS NV %d" % Economy.AUTO_LEVEL, false, Callable(), ""]
-		return [main, side]
 	if not game.owns(id, lid):
 		var price := game.buy_price(id, info)
 		var why := game.can_buy(id, info)
 		var main := ["COMPRAR " + Economy.money(price), why == "", _buy.bind(i), _short(why, price)]
 		if why == "Fuera de tu radio":
-			main = ["VER TU OFICINA", true, _select_office,
+			main = ["VER TU OFICINA", true, open_panel.bind("office"),
 				"Fuera de tu radio: sube la oficina para llegar"]
 		return [main, _loan_button(i, price, _buy.bind(i, false)) if why.begins_with("Te faltan")
 			else none]
@@ -393,9 +369,8 @@ func _build(i: int, to: int, remember: bool = true) -> void:
 		_undo = {}
 
 
-func _level_up() -> void:
-	if game.level_up(id) != "":
-		return
+# the office went up a level (in its tab): the area is drawn again for the new radius
+func _leveled() -> void:
 	_undo = {}
 	var lv := game.level(id)
 	say("¡Oficina Nv %d! Radio %d m" % [lv, roundi(game.radius(id))], true)
@@ -442,7 +417,7 @@ func refresh_lot(i: int) -> void:
 		plot["owned"] = false
 		plot.erase("works")
 		plot["built_tier"] = int(infos[i]["base_tier"])
-	elif not l.get("office", false):
+	else:
 		plot["owned"] = true
 		plot["built_tier"] = int(l["t"])
 		if l.has("to"):
@@ -481,7 +456,7 @@ func _follow_best() -> void:
 				view.focus_lot(i)
 				view.select(i)
 		"level":
-			_select_office()
+			open_panel("office")
 		"hire":
 			open_panel("team")
 	queue_redraw()
@@ -574,7 +549,7 @@ func _draw() -> void:
 	Ui.arrow(self, ZOOM_IN, "+", hot, view.zoom_step() == OfficeView.ZOOMS.size() - 1)
 	if _buttons_shown():
 		_draw_icon_button(BANK_BTN, "bank")
-		_draw_icon_button(TEAM_BTN, "team")
+		_draw_icon_button(OFFICE_BTN, "office")
 	if view.is_card_open():
 		_draw_card(view.picked())
 	else:
@@ -602,7 +577,7 @@ func _draw_money() -> void:
 			Ui.SMALL, Ui.BLOOD, Ui.TEN)
 
 
-# the bank and manager buttons: steel squares with a pixel "$" or the manager's face
+# the bank and office buttons: steel squares with a pixel "$" or a briefcase
 func _draw_icon_button(r: Rect2, kind: String) -> void:
 	var over := r.has_point(hot)
 	Ui.plate(self, r, Ui.STEEL.lightened(Ui.HOT_LIFT) if over else Ui.STEEL,
@@ -619,12 +594,20 @@ func _draw_icon_button(r: Rect2, kind: String) -> void:
 		if game.total_debt() > 0.0 and game.autopay() <= 0.0:
 			draw_rect(Rect2(r.end - Vector2(14, 14), Vector2(8, 8)), Ui.BLOOD)
 	else:
-		var m: Variant = game.manager(id)
-		if m is Dictionary:
-			Faces.draw(self, (r.get_center() - Vector2(32, 32) * 0.5).round(), 2.0,
-				int(m["face"]))
-		else:
-			Ui.text_in(self, r, "?", Ui.TEXT, Ui.MUTED if not game.managers_open(id) else Ui.GOLD)
+		# the office's briefcase: gold, its lower half shaded, a dark clasp
+		var rows: Array[String] = ["...111...", "..1...1..", "111111111", "111121111",
+			"222232222", "222222222", "222222222"]
+		var px := 4.0
+		var at := (r.get_center() - Vector2(9, 7) * px * 0.5).round()
+		for j in rows.size():
+			for i in rows[j].length():
+				var ch := rows[j][i]
+				if ch != ".":
+					var col := Ui.GOLD if ch == "1" else (Ui.GOLD_M if ch == "2" else Ui.VOID)
+					draw_rect(Rect2(at + Vector2(i, j) * px, Vector2(px, px)), col)
+		# a dot when there is something to do in the tab: a level to take, a manager to hire
+		if game.can_level_up(id) == "" or game.managers_open(id) and game.manager(id) == null:
+			draw_rect(Rect2(r.end - Vector2(14, 14), Vector2(8, 8)), Ui.CREAM)
 
 
 # price tags, build arrows and works bars over the map, only between the header and the bottom
@@ -655,8 +638,15 @@ func _draw_markers() -> void:
 			var left := Economy.duration(float(l["end"]) - _now())
 			var w := Ui.micro_width(left, 2.0)
 			Ui.micro(self, (roof + Vector2(-w * 0.5, -42)).round(), left, Ui.CREAM, 2.0, true)
-		elif not l.has("end") and not l.get("office", false) and game.can_build(id, lid) == "":
+		elif not l.has("end") and game.can_build(id, lid) == "":
 			_arrow_mark(roof + Vector2(0, -12))
+	# the office's pin answers the pointer: its name over it
+	if view.on_mark(hot) and not view.is_card_open():
+		var pin := view.mark_on_screen()
+		if view_r.has_point(pin):
+			var w := Ui.micro_width("TU OFICINA", 2.0)
+			Ui.micro(self, (pin - Vector2(w * 0.5, 18.0)).round(), "TU OFICINA", Ui.GOLD, 2.0,
+				true)
 	# price tags: the lots for sale nearest the middle of the view, never one over another
 	tags.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
 	var placed: Array[Rect2] = []
@@ -832,57 +822,41 @@ func _draw_card(i: int) -> void:
 	var x := CARD.position.x + 18.0
 	var y := CARD.position.y + 38.0
 	var room := CARD_X.position.x - x - 8.0
-	if _is_office(i):
-		var lv := game.level(id)
-		_fit(Vector2(x, y), "Tu oficina · Nv %d" % lv, room, Ui.CREAM)
-		var r0 := roundi(game.radius(id))
-		var radius := "Radio %d m" % r0
-		if lv < Economy.max_level():
-			radius += " > %d m" % roundi(Rules.active_radius(lv + 1))
-		_fit(Vector2(x, y + 32), "%s · grúas %d/%d" % [radius, game.cranes_busy(id),
-			game.cranes(id)], CARD.size.x - 36, Ui.MUTED)
-		var m: Variant = game.manager(id)
-		var who := "sin gerente" if not m is Dictionary else "gerente " + String(m["name"])
-		_fit(Vector2(x, y + 62), "Cobro sin conexión %d h · %s" % [roundi(game.offline_cap_s()
-			/ 3600.0), who], CARD.size.x - 36, Ui.MUTED)
-		Ui.text(self, Vector2(x, y + 92), "Alquiler %s/min" % Economy.money(game.lot_rent(id,
-			game.lot(id, lid))), Ui.TEXT, Ui.MINT)
+	_fit(Vector2(x, y), _street(i) if plot.get("street", "") != "" else "Calle sin nombre",
+		room, Ui.CREAM)
+	var l := game.lot(id, lid)
+	var tier := int(l["t"]) if not l.is_empty() else int(info["base_tier"])
+	var kind: String = Economy.TIER_NAMES[tier]
+	if info["zone"] == "industrial" and tier in [1, 2]:
+		kind = "Naves"
+	_fit(Vector2(x, y + 32), "%s · %s · %s m2" % [OfficeView.ZONES.get(info["zone"],
+		info["zone"]), kind, Ui.count(int(info["area"]))], CARD.size.x - 36, Ui.MUTED)
+	var mods := ""
+	for m: Array in info["mods"]:
+		mods += ("%s%s %+d%%" % [" · " if mods != "" else "", m[0], roundi(float(m[1]) * 100.0)])
+	if mods == "":
+		mods = "Sin extras"
+	_fit(Vector2(x, y + 62), mods, CARD.size.x - 36, Ui.MINT if mods != "Sin extras" else Ui.MUTED)
+	var rent := game.lot_rent(id, l) if not l.is_empty() else Economy.rent(tier, info)
+	if rent > 0.0:
+		Ui.text(self, Vector2(x, y + 92), "Alquiler %s/min" % Economy.money(rent), Ui.TEXT,
+			Ui.MINT)
 	else:
-		_fit(Vector2(x, y), _street(i) if plot.get("street", "") != "" else "Calle sin nombre",
-			room, Ui.CREAM)
-		var l := game.lot(id, lid)
-		var tier := int(l["t"]) if not l.is_empty() else int(info["base_tier"])
-		var kind: String = Economy.TIER_NAMES[tier]
-		if info["zone"] == "industrial" and tier in [1, 2]:
-			kind = "Naves"
-		_fit(Vector2(x, y + 32), "%s · %s · %s m2" % [OfficeView.ZONES.get(info["zone"],
-			info["zone"]), kind, Ui.count(int(info["area"]))], CARD.size.x - 36, Ui.MUTED)
-		var mods := ""
-		for m: Array in info["mods"]:
-			mods += ("%s%s %+d%%" % [" · " if mods != "" else "", m[0], roundi(float(m[1]) * 100.0)])
-		if mods == "":
-			mods = "Sin extras"
-		_fit(Vector2(x, y + 62), mods, CARD.size.x - 36, Ui.MINT if mods != "Sin extras" else Ui.MUTED)
-		var rent := game.lot_rent(id, l) if not l.is_empty() else Economy.rent(tier, info)
-		if rent > 0.0:
-			Ui.text(self, Vector2(x, y + 92), "Alquiler %s/min" % Economy.money(rent), Ui.TEXT,
-				Ui.MINT)
-		else:
-			# a solar pays nothing yet: what it would with houses on it
-			Ui.text(self, Vector2(x, y + 92), "Con casas %s/min" % Economy.money(Economy.rent(1,
-				info)), Ui.TEXT, Ui.MUTED, Ui.NARROW)
-		var state := "En venta"
-		var tone := Ui.GOLD
-		if not l.is_empty():
-			state = "Tuyo"
-			tone = Ui.CYAN
-		elif float(info["dist"]) > game.radius(id):
-			state = "Fuera de tu radio"
-			tone = Ui.BLOOD
-		Ui.text_right(self, Vector2(CARD.end.x - 18.0, y + 92), state, Ui.TEXT, tone)
-		if l.has("end"):
-			Ui.bar(self, Rect2(MAIN_BTN.position + Vector2(0, -10), Vector2(MAIN_BTN.size.x +
-				SIDE_BTN.size.x + 10, 8)), game.progress(id, lid))
+		# a solar pays nothing yet: what it would with houses on it
+		Ui.text(self, Vector2(x, y + 92), "Con casas %s/min" % Economy.money(Economy.rent(1,
+			info)), Ui.TEXT, Ui.MUTED, Ui.NARROW)
+	var state := "En venta"
+	var tone := Ui.GOLD
+	if not l.is_empty():
+		state = "Tuyo"
+		tone = Ui.CYAN
+	elif float(info["dist"]) > game.radius(id):
+		state = "Fuera de tu radio"
+		tone = Ui.BLOOD
+	Ui.text_right(self, Vector2(CARD.end.x - 18.0, y + 92), state, Ui.TEXT, tone)
+	if l.has("end"):
+		Ui.bar(self, Rect2(MAIN_BTN.position + Vector2(0, -10), Vector2(MAIN_BTN.size.x +
+			SIDE_BTN.size.x + 10, 8)), game.progress(id, lid))
 	var buttons := _buttons(i)
 	var main: Array = buttons[0]
 	var side: Array = buttons[1]

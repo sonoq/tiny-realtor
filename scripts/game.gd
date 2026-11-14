@@ -13,7 +13,8 @@ extends RefCounted
 # that went backwards pays nothing until it is past the last time seen again.
 
 const FORMAT := "tiny-realtor-save"
-const VERSION := 1
+# 2: the office has no lot of its own any more (v1 saves are migrated on load, see _sanitize)
+const VERSION := 2
 const AWAY_GAP := 120.0
 # money and debt move in steps no longer than this while a loan runs (interest, autopay)
 const BANK_STEP := 60.0
@@ -109,6 +110,7 @@ func _sanitize(t: float) -> void:
 	var seen := float(state["seen"]) if _num_ok(state.get("seen")) else t
 	state["seen"] = seen
 	_last_now = maxf(t, seen)
+	state["version"] = VERSION
 	for key: String in ["loans", "offices", "stats"]:
 		if not state.get(key) is Dictionary:
 			state[key] = {}
@@ -137,8 +139,15 @@ func _sanitize(t: float) -> void:
 			o["pool"] = {"n": 0, "at": t}
 		for lid: String in o["lots"].keys():
 			var l: Variant = o["lots"][lid]
-			var ok: bool = l is Dictionary and _num_ok(l.get("t")) and (l.get("office", false)
-				or _num_ok(l.get("k")) and _num_ok(l.get("mx")) and _num_ok(l.get("pk", 1.0)))
+			# a v1 save: the office stood on its lot (tier 3, the office's rent, never rebuilt);
+			# now the office is only a marker and its income its own, so that lot becomes an
+			# ordinary solar of the player's, filled in from the area when the office opens
+			if l is Dictionary and l.get("office", false):
+				o["lots"][lid] = _office_lot()
+				news.append("El solar de tu oficina queda libre")
+				continue
+			var ok: bool = l is Dictionary and _num_ok(l.get("t")) and _num_ok(l.get("k")) \
+				and _num_ok(l.get("mx")) and _num_ok(l.get("pk", 1.0))
 			# works with a missing or odd time are simply forgotten (the lot keeps its tier)
 			if ok and (l.has("end") or l.has("to")) and not (_num_ok(l.get("end"))
 					and _num_ok(l.get("to")) and _num_ok(l.get("start"))):
@@ -149,8 +158,9 @@ func _sanitize(t: float) -> void:
 				o["lots"].erase(lid)
 				continue
 			l["t"] = clampi(int(l["t"]), 0, 5)
-			if not l.get("office", false):
-				l["mx"] = clampi(int(l["mx"]), int(l["t"]), 5)
+			l["mx"] = clampi(int(l["mx"]), int(l["t"]), 5)
+			if l.has("fill"):
+				l["fill"] = true
 			if l.has("to") and int(l["to"]) <= int(l["t"]):
 				l.erase("to")
 				l.erase("end")
@@ -177,15 +187,42 @@ func has_office(id: String) -> bool:
 	return state["offices"].has(id)
 
 
-# a new office starts at level 1 with its own lot owned, free
-func add_office(id: String, office_lot: String) -> void:
+# a new office starts at level 1 with the lot where it was placed owned, free: an ordinary lot
+# (the office itself has no building); `infos` (Economy.lot_infos) fills in that lot's
+# multipliers now, else fill_lots does when the office is opened
+func add_office(id: String, office_lot: String, infos: Array[Dictionary] = []) -> void:
 	if has_office(id):
 		return
 	var o := {"level": 1, "office_lot": office_lot, "lots": {}, "manager": null,
 		"pool": {"n": 0, "at": now()}}
 	if office_lot != "":
-		o["lots"][office_lot] = {"t": 3, "k": 0.0, "pk": 1.0, "mx": 3, "office": true}
+		o["lots"][office_lot] = _office_lot()
 	state["offices"][id] = o
+	fill_lots(id, infos)
+
+
+# the office's free lot before its multipliers are known: it pays nothing and nothing can be
+# built on it (max tier = its tier) until fill_lots has seen the area
+static func _office_lot() -> Dictionary:
+	return {"t": Economy.OFFICE_LOT_TIER, "k": 0.0, "pk": 1.0, "mx": Economy.OFFICE_LOT_TIER,
+		"fill": true}
+
+
+# gives owned lots still waiting for them ("fill") their rent and price multipliers and max
+# tier from the area's lot infos; true when one changed
+func fill_lots(id: String, infos: Array[Dictionary]) -> bool:
+	var lots: Dictionary = office(id).get("lots", {})
+	var changed := false
+	for info in infos:
+		var l: Dictionary = lots.get(info["id"], {})
+		if not l.get("fill", false):
+			continue
+		l["k"] = float(info["rent_k"])
+		l["pk"] = float(info["price_k"])
+		l["mx"] = maxi(int(info["max_tier"]), int(l["t"]))
+		l.erase("fill")
+		changed = true
+	return changed
 
 
 func level(id: String) -> int:
@@ -261,18 +298,26 @@ func cut(id: String, kind: String) -> float:
 
 
 func lot_rent(id: String, l: Dictionary) -> float:
-	var base := Economy.office_rent(level(id)) if l.get("office", false) \
-		else Economy.RENT[int(l["t"])] * float(l["k"])
-	return base * (1.0 + Economy.trait_of(manager(id), "rent"))
+	return Economy.RENT[int(l["t"])] * float(l["k"]) * (1.0 + Economy.trait_of(manager(id), "rent"))
 
 
-# rent per minute of one office, or of all of them
+# the office's own income per minute (its commissions, by level), with the manager's rent bonus
+func office_income(id: String) -> float:
+	return Economy.office_income(level(id)) * (1.0 + Economy.trait_of(manager(id), "rent"))
+
+
+# what one office's lots pay per minute, without its own income
+func lots_rent(id: String) -> float:
+	var sum := 0.0
+	for lid: String in office(id).get("lots", {}):
+		sum += lot_rent(id, office(id)["lots"][lid])
+	return sum
+
+
+# income per minute of one office (its lots' rent and its own income), or of all of them
 func income(id: String = "") -> float:
 	if id != "":
-		var sum := 0.0
-		for lid: String in office(id).get("lots", {}):
-			sum += lot_rent(id, office(id)["lots"][lid])
-		return sum
+		return office_income(id) + lots_rent(id)
 	var all := 0.0
 	for oid: String in offices():
 		all += income(oid)
@@ -443,7 +488,6 @@ func worth() -> float:
 	for id: String in offices():
 		for lid: String in office(id)["lots"]:
 			var l: Dictionary = office(id)["lots"][lid]
-			# the office's own lot is property too: a block of flats
 			sum += Economy.worth(float(l.get("pk", 1.0)) * inflation(id), int(l["t"]))
 	return sum
 
@@ -679,8 +723,6 @@ func can_build(id: String, lot_id: String, to: int = -1) -> String:
 	var l := lot(id, lot_id)
 	if l.is_empty():
 		return "No es tuyo"
-	if l.get("office", false):
-		return "Es tu oficina"
 	if l.has("end"):
 		return "Ya está en obras"
 	if int(l["t"]) >= int(l["mx"]):
@@ -750,7 +792,7 @@ func auto_build(id: String, at: float = -1.0) -> Array[String]:
 		var lots: Dictionary = office(id)["lots"]
 		for lid: String in lots:
 			var l: Dictionary = lots[lid]
-			if l.get("office", false) or l.has("end") or int(l["t"]) >= int(l["mx"]):
+			if l.has("end") or int(l["t"]) >= int(l["mx"]):
 				continue
 			var c := build_cost(id, l)
 			if c > money() * Economy.AUTO_SHARE:
@@ -905,7 +947,7 @@ func best_move(id: String, infos: Array[Dictionary]) -> Dictionary:
 	var lv := level(id)
 	if lv < Economy.max_level():
 		var c := Economy.level_cost(lv)
-		var gain := Economy.office_rent(lv + 1) - Economy.office_rent(lv) + inc * 0.3
+		var gain := Economy.office_income(lv + 1) - Economy.office_income(lv) + inc * 0.3
 		best = {"kind": "level", "cost": c, "payback": c / gain}
 	if managers_open(id) and manager(id) == null:
 		var cands := pool(id)
@@ -925,7 +967,7 @@ func best_move(id: String, infos: Array[Dictionary]) -> Dictionary:
 			if not free:
 				continue
 			var l := lot(id, lid)
-			if l.get("office", false) or l.has("end") or int(l["t"]) >= int(l["mx"]):
+			if l.has("end") or int(l["t"]) >= int(l["mx"]):
 				continue
 			var to := maxi(best_target(id, lid), int(l["t"]) + 1)
 			var c := build_cost(id, l, to)
@@ -959,8 +1001,6 @@ func apply(id: String, block: Dictionary) -> void:
 			continue
 		var l: Dictionary = lots[pid]
 		p["owned"] = true
-		if l.get("office", false):
-			continue
 		p["built_tier"] = int(l["t"])
 		p["levels"] = BlockBaker.levels_for(pid, int(l["t"]))
 		if l.has("to"):

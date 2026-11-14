@@ -31,7 +31,7 @@ Abres oficinas inmobiliarias en barrios reales del mundo, compras terrenos grand
 ### Estilo visual (decidido: A, "hermano de Tiny Battlegrounds")
 - El de la maqueta `docs/style_mockups/a_battlegrounds/`: fondo de pizarra oscura, paneles con remaches, letra pixel gruesa con borde oscuro, acentos cian, oro y menta, como Tiny Battlegrounds.
 - El barrio es una maqueta flotante: dentro del radio de la oficina todo va a todo color; fuera, la ciudad es gris lila, como miniaturas sin pintar que vas conquistando, con un anillo dorado discontinuo en el borde.
-- Lo tuyo lleva tejado turquesa y bandera cian; los solares en venta, cartel rojo con "$" y etiqueta de precio; el rascacielos, corona dorada; tu oficina, un edificio pequeño con un cartelito REALTOR.
+- Lo tuyo lleva tejado turquesa y bandera cian; los solares en venta, cartel rojo con "$" y etiqueta de precio; el rascacielos, corona dorada; tu oficina no es un edificio: una chincheta dorada en la acera marca dónde la pusiste, y la oficina vive en su propia pestaña.
 - Todo es pixel art de verdad: una sola paleta, sin mezclas de color, cada píxel del dibujo se ve como un bloque de 2x2.
 
 ## 3. Cómo se consiguen los mapas
@@ -91,7 +91,7 @@ Abres oficinas inmobiliarias en barrios reales del mundo, compras terrenos grand
 ## 8. Qué hay hecho
 
 - **El prototipo del mapa, con datos reales**: lista de 31 ciudades, mapa de la ciudad (se mueve arrastrando, 3 niveles de zoom, nombres de barrios), cursor con el círculo de la oficina (rojo si está a menos de 1,5 km de otra), confirmar, pantalla de descarga (con reintentos y servidores de reserva), y la vista de la oficina en isométrico: calles reales con sus nombres, manzanas y terrenos calculados, solares vacíos con cartel de "se vende", urbanizaciones del juego en los terrenos construidos, terrenos que se señalan y se pulsan con su ficha, parques, agua, vías del tren y el radio activo iluminado.
-- **El primer bucle de juego** (todo el detalle en `GAMEPLAY.md`): dinero y alquiler por minuto (también con el juego cerrado, con tope), comprar terrenos dentro del radio, construir (uno o varios niveles de golpe; la obra se ve con andamios y grúa), subir la oficina de nivel (el radio crece), el banco (tres préstamos que nunca te ahogan, pago automático) y un gerente por oficina (retrato pixel art, rareza, bonus). Tu oficina es tu primer terreno, gratis, con un edificio de oficinas pequeño y bloques normales tuyos alrededor.
+- **El primer bucle de juego** (todo el detalle en `GAMEPLAY.md`): dinero y alquiler por minuto (también con el juego cerrado, con tope), comprar terrenos dentro del radio, construir (uno o varios niveles de golpe; la obra se ve con andamios y grúa), subir la oficina de nivel (el radio crece), el banco (tres préstamos que nunca te ahogan, pago automático) y un gerente por oficina (retrato pixel art, rareza, bonus). La oficina no ocupa terreno: es una pestaña (nivel, obras solas, gerente, y sitio para lo que vendrá) con una chincheta en el mapa; el terreno donde la pones es tuyo, gratis, como solar para construir.
 - **La partida se guarda** (`save.json`) y al abrir el juego vuelve a la última oficina, con el resumen de "Mientras no estabas".
 - Las oficinas y los mapas se guardan y siguen ahí al volver a abrir el juego.
 - Modo de prueba sin internet (`-- --fixture`): datos inventados, marcados en pantalla como DATOS DE PRUEBA, con su propia partida aparte.
