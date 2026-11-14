@@ -30,7 +30,6 @@ const FACADES: Array[String] = ["CRM", "OCH", "SAL", "STN", "CRM", "OCH"]
 const TAGS := 5
 # placeholder asking price per square metre, until the game has an economy
 const PRICE_M2 := 300.0
-# a skyscraper's podium, in pixels
 # the torres / rascacielos layout (Skyline: CLUSTER A, BRIDGES B, MEGA C, RING D); Oscar's pick
 const SKYLINE_STYLE := Skyline.BRIDGES
 const STREET_TREE_EVERY := 9.0

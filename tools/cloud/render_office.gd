@@ -183,6 +183,8 @@ func _redraw(block: Dictionary, id: String) -> bool:
 		return false
 	var view := BlockView.new()
 	view.live = true
+	# as the game draws it: with the street names painted, if that is the look in use
+	view.names = OfficeView.LABEL_STYLE == StreetNames.PAINTED
 	view.active_radius = Rules.active_radius(1)
 	view.set_block(area)
 	root.add_child(view)
@@ -208,6 +210,7 @@ func _redraw(block: Dictionary, id: String) -> bool:
 	var after := view.texture.get_image()
 	var fresh_view := BlockView.new()
 	fresh_view.live = true
+	fresh_view.names = view.names
 	fresh_view.active_radius = Rules.active_radius(1)
 	fresh_view.set_block(area)
 	root.add_child(fresh_view)

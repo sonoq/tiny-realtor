@@ -134,6 +134,12 @@ static func painted(block: Dictionary, iso: Iso, radius: float, junctions: Array
 		var length := a.distance_to(b)
 		if length < half * 2.0 + PAINT_CLEAR * 2.0:
 			continue
+		# only the junctions along this run can be in the way
+		var near: Array = []
+		for j: Array in junctions:
+			var q := Geometry2D.get_closest_point_to_segment(j[0], a, b)
+			if q.distance_to(j[0]) < float(j[1]) + PAINT_CLEAR:
+				near.append(j)
 		# the free spot nearest the run's middle
 		var best := Vector2.INF
 		var best_d := INF
@@ -144,7 +150,7 @@ static func painted(block: Dictionary, iso: Iso, radius: float, junctions: Array
 			t += 3.0
 			if off >= best_d or c.length() > radius - 12.0 - half:
 				continue
-			if _blocked(c, d, half, float(road["width"]), name, junctions, out):
+			if _blocked(c, d, half, float(road["width"]), name, near, out):
 				continue
 			best = c
 			best_d = off

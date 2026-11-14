@@ -17,8 +17,8 @@ extends RefCounted
 #   "shadows": [[foot, height]], "top": px}], "built": footprints trees keep off, "ground":
 #   [[poly, palette name]], "works": [[foot, goal px]], "top": Vector2 (metres), "top_z": px}
 # A mass is drawn bottom to top and outlined in ink as one; masses are in painter's order.
-# Piece keys: "look" (TOWER, GLASS, PODIUM, BRIDGE, TREE, PAD), "foot", "z0", "z1"; GLASS takes
-# "lobby" and "crown" (0, 1 = 3 gold rows, 2 = 4), TOWER "props", the top piece of a mass
+# Piece keys: "look" (TOWER, GLASS, PODIUM, BRIDGE, TREE, PAD, LAWN), "foot", "z0", "z1"; GLASS
+# takes "lobby" and "crown" (0, 1 = 3 gold rows, 2 = 4), TOWER "props", the top piece of a mass
 # "spire" (px) and "flag"; TREE "at" + "z"; PAD and LAWN lie on "foot" at "z1".
 
 enum { CLUSTER, BRIDGES, MEGA, RING }
@@ -42,7 +42,7 @@ const BRIDGE_H := 4.0
 # the highest pixel any variant of this tier can reach, for pops and the drawing's headroom
 static func top(tier: int, levels: int) -> float:
 	if tier == 4:
-		return tower_z(levels + 3) + TOWER_SETBACK + 6.0
+		return PODIUM_Z + tower_z(levels + 3) + TOWER_SETBACK + 6.0
 	return sky_z(levels) + SPIRE + 3.0
 
 
@@ -84,8 +84,9 @@ static func _cluster(out: Dictionary, tier: int, poly: PackedVector2Array, level
 		var n := clampi(int(area / 1900.0), 1, 3)
 		var half := clampf(sqrt(area) * 0.12, 6.0, 8.5)
 		for at in spots(poly, n, half, id, 7.0):
+			var foot := Iso.square(at, half)
 			var lv := levels + int(Iso.h01(id + "tl%d_%d" % [roundi(at.x), roundi(at.y)]) * 7.0) - 3
-			_add(out, _tower_mass(Iso.square(at, half), 0.0, tower_z(lv)), Iso.square(at, half))
+			_add(out, _tower_mass(foot, 0.0, tower_z(lv)), foot)
 		return
 	var n := clampi(int(area / 1100.0) + 1, 3, 5)
 	var half := clampf(sqrt(area) * 0.085, 4.5, 6.5)
@@ -98,8 +99,8 @@ static func _cluster(out: Dictionary, tier: int, poly: PackedVector2Array, level
 		_add(out, _glass_mass(foot, 0.0, z, k == 0), foot)
 
 
-# B: one podium over most of the lot with the towers standing on it in a row, joined by glass
-# sky bridges; one object, each tower and bridge ringed in ink on its own
+# B: 2-3 towers in a chain on one podium (their hull and a terrace round them, a lawn on its
+# roof), rascacielos joined by gold sky bridges; one object, each tower and bridge ringed in ink
 static func _bridges(out: Dictionary, tier: int, poly: PackedVector2Array, levels: int,
 		id: String) -> void:
 	var area := Iso.area(poly)
@@ -249,8 +250,8 @@ static func _mega(out: Dictionary, tier: int, poly: PackedVector2Array, levels: 
 	out["works"].append([s0, tz])
 
 
-# D: towers on the corners of a square round a garden in the lot's middle (a fountain, lawn),
-# the far ones the tallest; each tower its own object
+# D: towers spread round a ring path inside the lot's edge, a garden with a fountain in the
+# middle, the far ones the tallest; each tower its own object
 static func _ring(out: Dictionary, tier: int, poly: PackedVector2Array, levels: int,
 		id: String) -> void:
 	var inner := Iso.offset(poly, -3.0)

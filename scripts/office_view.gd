@@ -479,7 +479,8 @@ func _labels_now() -> Array:
 # the named street nearest the pointer, if it is within HOVER_REACH (HOVER)
 func _street_under(at: Vector2) -> void:
 	_hover_name = ""
-	if not is_drawn() or _play.blocks_map() or at.y < MAP_TOP or at.y > MAP_BOTTOM:
+	if not is_drawn() or _play.blocks_map() or at.y < MAP_TOP or at.y > MAP_BOTTOM \
+			or at.x > MAP_RIGHT and at.y < BUTTONS_BOTTOM:
 		return
 	var z := _zoom()
 	var best := HOVER_REACH

@@ -2,8 +2,8 @@ extends SceneTree
 
 # The skyline variants side by side, for Oscar to pick one (AreaBuilder.SKYLINE_STYLE): for each
 # Skyline layout (A, B, C, D) a row with the same two lots near the office built as torres, as
-# rascacielos and as the works toward rascacielos (x2, outlined in gold), and the same fully grown area (every lot built as high
-# as it may go, as the game grows it) at x2 around the office. Saves skyline_options.png and,
+# rascacielos and as the works toward rascacielos (x2, outlined in gold), and the same fully
+# grown area (every lot built as high as it may go, as the game grows it) at x2 around the office. Saves skyline_options.png and,
 # per variant, grown_<letter>.png; fails on any pixel off the palette. Needs a display
 # (xvfb-run, see screenshot.sh).
 #
@@ -102,8 +102,8 @@ func _mid(lot: Dictionary) -> Vector2:
 	return Iso.centroid(AreaBuilder._pts(lot["poly"]))
 
 
-# [torres, rascacielos, works toward rascacielos] cells: both lots at one tier, the first one's crop beside the
-# second's (each CELL, x2)
+# [torres, rascacielos, works toward rascacielos] cells: both lots at one tier, the first one's
+# crop beside the second's (each CELL, x2)
 func _tiers(block: Dictionary, picks: Array[int]) -> Array[Image]:
 	var out: Array[Image] = []
 	# 6 = works toward rascacielos on a bloque
